@@ -155,7 +155,7 @@ export function useRelay() {
     })
     connection.onclose(() => !cancelled && setState("disconnected"))
 
-    void connection
+    const started = connection
       .start()
       .then(() => {
         if (cancelled) return
@@ -168,7 +168,11 @@ export function useRelay() {
     return () => {
       cancelled = true
       connectionRef.current = null
-      void connection.stop()
+      // Stopped only once the start has settled. StrictMode mounts, unmounts and
+      // remounts, so an immediate stop lands in the middle of negotiation and
+      // fails with "the connection was stopped during negotiation" — noise on
+      // every single load, which is exactly what hides a real transport problem.
+      void started.finally(() => connection.stop())
     }
   }, [attach, announceConnected])
 
