@@ -1,4 +1,14 @@
-.venv/
-__pycache__/
-*.pyc
+# Build inputs only. Everything the image needs is produced inside it, so
+# anything already built locally is excluded — a stale api/wwwroot copied in
+# would silently beat the one the frontend stage builds.
+.git/
+.github/
+**/node_modules/
+**/bin/
+**/obj/
+frontend/dist/
+api/wwwroot/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 README.md
