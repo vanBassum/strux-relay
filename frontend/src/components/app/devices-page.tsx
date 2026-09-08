@@ -6,6 +6,7 @@ import {
   ChevronUpIcon,
   ChevronsUpDownIcon,
   CpuIcon,
+  ExternalLinkIcon,
   SearchIcon,
 } from "lucide-react"
 
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/table"
 import { ChoiceFilter } from "@/components/app/device-filters"
 import { DeviceUrl } from "@/components/app/device-url"
+import { deviceUiUrl } from "@/lib/device-url"
 import type { Device, DeviceList } from "@/hooks/use-devices"
 import { useNow } from "@/hooks/use-now"
 import {
@@ -373,6 +375,27 @@ function DeviceRow({
           className="flex justify-end gap-1"
           onClick={(event) => event.stopPropagation()}
         >
+          {/* Straight to the device's own site, which is what the dashboard
+              this replaced did with the device's name. Only while it is online:
+              the page is fetched over the pipe, so without one there is nothing
+              to serve and a dead link is worse than no link. */}
+          {online && device.approval === "approved" && (
+            <Button
+              size="sm"
+              variant="outline"
+              render={
+                <a
+                  href={deviceUiUrl(device.deviceId)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Open this device's own web UI"
+                />
+              }
+            >
+              <ExternalLinkIcon />
+              Open UI
+            </Button>
+          )}
           {device.approval === "pending" && (
             <Button size="sm" onClick={() => void onApprove(device)}>
               Approve

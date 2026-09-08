@@ -1,4 +1,4 @@
-import { RadioTowerIcon } from "lucide-react"
+import { ExternalLinkIcon, RadioTowerIcon } from "lucide-react"
 
 import {
   Sidebar,
@@ -19,6 +19,7 @@ import { RELAY_PAGES, type RelayPage } from "@/components/app/navigation"
 import type { Device } from "@/hooks/use-devices"
 import type { Session } from "@/hooks/use-relay"
 import { navIcon, type DeviceNavItem } from "@/lib/device-nav"
+import { deviceUiUrl } from "@/lib/device-url"
 
 export function AppSidebar({
   session,
@@ -106,6 +107,42 @@ export function AppSidebar({
                       </SidebarMenuItem>
                     )
                   })}
+                </SidebarMenu>
+
+                {/* The way out to the device's own site, in its own menu below the
+                    contributed pages rather than among them. It is not another
+                    page of this shell — it leaves for a page the DEVICE serves —
+                    and the separate group plus the external-link icon are what say
+                    so before it is clicked.
+
+                    This is the fallback for a device with no modules, so it stays
+                    whatever the list above grows into. */}
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    {device.connection === "online" ? (
+                      <SidebarMenuButton
+                        tooltip="Open device UI"
+                        render={
+                          <a
+                            href={deviceUiUrl(device.deviceId)}
+                            target="_blank"
+                            rel="noreferrer"
+                          />
+                        }
+                      >
+                        <ExternalLinkIcon />
+                        <span>Open device UI</span>
+                      </SidebarMenuButton>
+                    ) : (
+                      <SidebarMenuButton
+                        disabled
+                        tooltip="Offline — no pipe to load the page over"
+                      >
+                        <ExternalLinkIcon />
+                        <span>Open device UI</span>
+                      </SidebarMenuButton>
+                    )}
+                  </SidebarMenuItem>
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
