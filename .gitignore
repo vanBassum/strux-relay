@@ -4,3 +4,15 @@ __pycache__/
 relay.db
 relay.db-wal
 relay.db-shm
+
+# .NET
+bin/
+obj/
+*.user
+
+# The relay's SQLite state (Data Source in appsettings), and the frontend build
+# output that vite writes into the API project.
+relay.sqlite
+relay.sqlite-wal
+relay.sqlite-shm
+api/wwwroot/
