@@ -82,6 +82,13 @@ internal static class DevicePipe
         {
             var wasCurrent = await registry.RemoveAsync(connection);
             await connection.CloseAsync();
+
+            // CancellationToken.None deliberately: RequestAborted is ALREADY
+            // cancelled by the time a dropped socket gets here, so passing it
+            // would cancel the write that records the drop.
+            await pairing.MarkLastSeenAsync(
+                deviceId, connection.LastMessageAt, CancellationToken.None);
+
             logger.LogInformation(
                 "device {DeviceId} pipe #{Pipe} closed{Note}",
                 deviceId, connection.Pipe,

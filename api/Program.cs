@@ -37,16 +37,19 @@ await RelayDatabase.MigrateAsync(app.Services, app.Logger);
 // The device pipe is a raw socket, not a hub, so the upgrade is handled here.
 app.UseWebSockets(new WebSocketOptions
 {
-    // Note what this does NOT buy: the firmware discards every non-binary frame
-    // (RelaySocket::ReadFrame), so it never pongs a server ping and a missing
-    // pong says nothing — which is why no KeepAliveTimeout is set here, as one
-    // would tear down healthy pipes. What it does buy is the send itself
-    // failing, which surfaces a dead TCP connection on this side.
+    // Ping, and require an answer. The device does reply: ESP-IDF's WebSocket
+    // transport handles PING internally and sends a PONG (transport_ws.c),
+    // BEFORE the firmware's own read loop sees the frame — so the fact that
+    // RelaySocket::ReadFrame discards non-binary frames does not mean pings go
+    // unanswered. Worth stating because assuming otherwise is what left this
+    // without a timeout at first.
     //
-    // Liveness in the other direction is the device's job and it already does
-    // it: RelayManager pings every 30 s and drops the pipe when one will not go
-    // out. So an open pipe here means the device was alive within 30 s.
+    // With both set, a device that vanishes without closing — power cut, WiFi
+    // gone — is noticed within roughly one interval plus one timeout rather
+    // than whenever TCP retransmission happens to give up, which is minutes and
+    // not ours to control.
     KeepAliveInterval = TimeSpan.FromSeconds(30),
+    KeepAliveTimeout = TimeSpan.FromSeconds(20),
 });
 
 app.UseDefaultFiles();

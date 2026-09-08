@@ -168,6 +168,32 @@ internal sealed class PairingStore(
         return true;
     }
 
+    /// <summary>
+    /// Records when a device was last heard from, as its pipe goes down.
+    ///
+    /// Without this, last-seen was written at connect and never again, so an
+    /// offline device reported when it ARRIVED rather than when it left: a board
+    /// up for eleven minutes and then unplugged read "last seen 11 minutes ago"
+    /// the instant it went, which is the one moment the column is actually load
+    /// bearing.
+    ///
+    /// Only ever moves forward. A pipe that was already replaced closes after the
+    /// one that replaced it is serving, and its older timestamp must not win.
+    /// </summary>
+    public async Task MarkLastSeenAsync(
+        string deviceId, DateTime seenAt, CancellationToken cancellationToken = default)
+    {
+        await using var database = await contexts.CreateDbContextAsync(cancellationToken);
+
+        var approved = await database.Approved.FirstOrDefaultAsync(
+            device => device.DeviceId == deviceId, cancellationToken);
+        if (approved is null || approved.LastSeen >= seenAt)
+            return;
+
+        approved.LastSeen = seenAt;
+        await database.SaveChangesAsync(cancellationToken);
+    }
+
     // ── what the dashboard drives ─────────────────────────────────────────────
 
     public async Task<PairingState> GetStateAsync(
