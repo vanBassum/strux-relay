@@ -49,25 +49,19 @@ export function DevicesPage() {
 
   return (
     <div className="flex flex-col gap-4 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold">Devices</h1>
-          <p className="text-muted-foreground text-sm">
-            Every device this relay knows about. A new one is refused once, shows
-            up here, and connects on its own after approval.
-          </p>
+      {/* No title or blurb: the bar above already says Devices, and the URL is
+          self-explanatory on a page about pointing devices at this relay. */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="relative max-w-xs flex-1 basis-64">
+          <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+          <Input
+            className="pl-8"
+            placeholder="Search devices…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
         </div>
         <DeviceUrl />
-      </div>
-
-      <div className="relative max-w-xs">
-        <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
-        <Input
-          className="pl-8"
-          placeholder="Search devices…"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
       </div>
 
       <div className="rounded-lg border">
