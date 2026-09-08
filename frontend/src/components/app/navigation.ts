@@ -1,14 +1,13 @@
 /**
- * What the shell is showing.
+ * What the main area is showing. Note what is NOT in here: which device is
+ * selected.
  *
- * Two kinds rather than a flat page name, because a device page is only
- * meaningful together with the device it belongs to — a `page` on its own could
- * not say which board's Configuration it meant. Keeping the device id in the
- * view is also what lets the sidebar scope itself without a second source of
- * truth about "the current device".
+ * Selection outlives the view on purpose. Going back to the list is not
+ * deselecting — the device stays in the sidebar so its pages are one click away,
+ * and pressing another row is what changes it. Folding the id into the view
+ * would have made "show the list" and "forget which device I was on" the same
+ * action, which is why they were the same action before.
  */
-export type View =
-  | { kind: "devices" }
-  | { kind: "device"; deviceId: string; page: string }
+export type View = { kind: "devices" } | { kind: "device"; page: string }
 
 export const RELAY_HOME: View = { kind: "devices" }

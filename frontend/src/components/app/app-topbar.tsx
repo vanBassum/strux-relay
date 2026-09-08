@@ -1,6 +1,8 @@
 import { ChevronRightIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Separator } from "@/components/ui/separator"
+import { ThemeToggle } from "@/components/app/theme-toggle"
 import type { ConnectionState } from "@/hooks/use-relay"
 
 const DOTS: Record<ConnectionState, string> = {
@@ -64,6 +66,8 @@ export function AppTopbar({
             Retry
           </Button>
         )}
+        <Separator orientation="vertical" className="!h-4" />
+        <ThemeToggle />
       </div>
     </header>
   )

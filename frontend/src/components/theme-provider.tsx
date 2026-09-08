@@ -13,6 +13,13 @@ type ThemeProviderProps = {
 
 type ThemeProviderState = {
   theme: Theme
+  /**
+   * What "system" actually resolved to — the value on the html element. Exposed
+   * because a two-state control cannot render `theme`: with "system" selected it
+   * has to show which way the system went, and anything computing that itself
+   * would be a second copy of the media query below.
+   */
+  resolvedTheme: ResolvedTheme
   setTheme: (theme: Theme) => void
 }
 
@@ -93,6 +100,11 @@ export function ThemeProvider({
     return defaultTheme
   })
 
+  // Tracked rather than derived on demand: the only place the answer changes is
+  // the media-query listener below, and that is a callback, so nothing has to
+  // set state from inside an effect body to keep this current.
+  const [systemTheme, setSystemTheme] = React.useState<ResolvedTheme>(getSystemTheme)
+
   const setTheme = React.useCallback(
     (nextTheme: Theme) => {
       localStorage.setItem(storageKey, nextTheme)
@@ -129,6 +141,7 @@ export function ThemeProvider({
 
     const mediaQuery = window.matchMedia(COLOR_SCHEME_QUERY)
     const handleChange = () => {
+      setSystemTheme(getSystemTheme())
       applyTheme("system")
     }
 
@@ -204,12 +217,15 @@ export function ThemeProvider({
     }
   }, [defaultTheme, storageKey])
 
+  const resolvedTheme: ResolvedTheme = theme === "system" ? systemTheme : theme
+
   const value = React.useMemo(
     () => ({
       theme,
+      resolvedTheme,
       setTheme,
     }),
-    [theme, setTheme]
+    [theme, resolvedTheme, setTheme]
   )
 
   return (

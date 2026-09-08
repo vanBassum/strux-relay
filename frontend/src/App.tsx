@@ -8,6 +8,7 @@ import { RELAY_HOME, type View } from "@/components/app/navigation"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { useTheme } from "@/components/theme-provider"
 import { useDeviceNavigation } from "@/hooks/use-device-navigation"
 import { useDevices } from "@/hooks/use-devices"
 import { RelayProvider, useRelay, useRelayContext } from "@/hooks/use-relay"
@@ -19,17 +20,19 @@ function Workspace() {
   // Held here rather than in the page: the sidebar needs the selected device too,
   // and a second useDevices would mean a second copy of the same list.
   const devices = useDevices()
+
+  // Two pieces of state, not one. Which device is in scope survives going back
+  // to the list — the DEVICE section stays in the sidebar and pressing another
+  // row is what moves it — so it cannot live inside the view.
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [view, setView] = useState<View>(RELAY_HOME)
 
-  // Resolved from the live list every render, not stored alongside the view. The
+  // Resolved from the live list every render, not stored alongside the id. The
   // list changes underneath us — the relay pushes when a device connects or is
-  // forgotten — so a stored copy would go stale, and a device forgotten while
-  // open would leave the shell scoped to something that no longer exists.
+  // forgotten — so a device forgotten while selected simply stops resolving and
+  // the DEVICE section goes with it, no cleanup required.
   const selected =
-    view.kind === "device"
-      ? (devices.devices.find((device) => device.deviceId === view.deviceId) ??
-        null)
-      : null
+    devices.devices.find((device) => device.deviceId === selectedId) ?? null
 
   const deviceNav = useDeviceNavigation(selected)
 
@@ -43,23 +46,25 @@ function Workspace() {
     : null
   const activeItem = deviceNav.find((item) => item.id === devicePage) ?? null
 
-  const openDevice = (deviceId: string) =>
-    setView({ kind: "device", deviceId, page: DEFAULT_DEVICE_PAGE })
+  const openDevice = (deviceId: string) => {
+    setSelectedId(deviceId)
+    setView({ kind: "device", page: DEFAULT_DEVICE_PAGE })
+  }
 
-  const showDevicePage = selected !== null && activeItem !== null
+  const onDevice = view.kind === "device" && selected !== null && activeItem !== null
 
   return (
     <>
       <AppSidebar
         session={session}
-        atRelayHome={selected === null}
+        atRelayHome={view.kind === "devices"}
         onRelayHome={() => setView(RELAY_HOME)}
         device={selected}
         deviceNav={deviceNav}
-        devicePage={devicePage}
-        onDevicePage={(page) =>
-          selected && setView({ kind: "device", deviceId: selected.deviceId, page })
-        }
+        // Nothing is the active page while the list is showing, even though a
+        // device is still selected: the highlight says where you are.
+        devicePage={onDevice ? devicePage : null}
+        onDevicePage={(page) => setView({ kind: "device", page })}
       />
       {/* min-h-0 so the page gives up room to the bar pinned above it, rather
           than growing and pushing it off the top of the window. */}
@@ -68,7 +73,7 @@ function Workspace() {
           state={state}
           onRetry={reconnect}
           trail={
-            showDevicePage
+            onDevice
               ? [
                   { label: "Devices", onClick: () => setView(RELAY_HOME) },
                   { label: selected.name || selected.deviceId },
@@ -78,10 +83,14 @@ function Workspace() {
           }
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-          {showDevicePage ? (
+          {onDevice ? (
             <DevicePage device={selected} item={activeItem} />
           ) : (
-            <DevicesPage devices={devices} onOpen={openDevice} />
+            <DevicesPage
+              devices={devices}
+              selectedId={selectedId}
+              onOpen={openDevice}
+            />
           )}
         </div>
       </SidebarInset>
@@ -91,6 +100,9 @@ function Workspace() {
 
 export function App() {
   const relay = useRelay()
+  // sonner's wrapper reads next-themes, which this app does not use, so without
+  // being told the theme its toasts follow the OS and ignore the toggle.
+  const { resolvedTheme } = useTheme()
 
   return (
     <RelayProvider value={relay}>
@@ -99,7 +111,7 @@ export function App() {
           <Workspace />
         </SidebarProvider>
       </TooltipProvider>
-      <Toaster />
+      <Toaster theme={resolvedTheme} />
     </RelayProvider>
   )
 }

@@ -82,10 +82,13 @@ function SortableHead({
 
 export function DevicesPage({
   devices: list,
+  selectedId,
   onOpen,
 }: {
   /** Passed in rather than fetched here: the sidebar reads the same list. */
   devices: DeviceList
+  /** Marked in the list, because the sidebar is still scoped to it. */
+  selectedId: string | null
   onOpen: (deviceId: string) => void
 }) {
   const { devices, loading, approve, forget } = list
@@ -201,6 +204,7 @@ export function DevicesPage({
                   // two rows, and that is deliberately visible.
                   key={`${device.deviceId}/${device.token ?? ""}`}
                   device={device}
+                  selected={device.deviceId === selectedId}
                   onApprove={approve}
                   onForget={forget}
                   onOpen={onOpen}
@@ -261,11 +265,13 @@ export function DevicesPage({
 
 function DeviceRow({
   device,
+  selected,
   onApprove,
   onForget,
   onOpen,
 }: {
   device: Device
+  selected: boolean
   onApprove: (device: Device) => Promise<void>
   onForget: (device: Device) => Promise<void>
   onOpen: (deviceId: string) => void
@@ -279,6 +285,9 @@ function DeviceRow({
 
   return (
     <TableRow
+      // data-state is what TableRow already styles a selected row with, so the
+      // marking comes from the component rather than from a colour chosen here.
+      data-state={selected ? "selected" : undefined}
       className={openable ? "cursor-pointer" : undefined}
       // A <tr> is not a button, so the keyboard handling has to be spelled out
       // rather than inherited: without this the whole list becomes unreachable
