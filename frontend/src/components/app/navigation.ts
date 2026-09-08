@@ -1,6 +1,11 @@
-import { ChartColumnIcon, HardDriveIcon, type LucideIcon } from "lucide-react"
+import {
+  ChartColumnIcon,
+  DatabaseIcon,
+  HardDriveIcon,
+  type LucideIcon,
+} from "lucide-react"
 
-export type RelayPage = "devices" | "telemetry"
+export type RelayPage = "devices" | "telemetry" | "cache"
 
 /**
  * Navigation the relay owns.
@@ -13,6 +18,7 @@ export type RelayPage = "devices" | "telemetry"
 export const RELAY_PAGES: { id: RelayPage; label: string; icon: LucideIcon }[] = [
   { id: "devices", label: "Devices", icon: HardDriveIcon },
   { id: "telemetry", label: "Telemetry", icon: ChartColumnIcon },
+  { id: "cache", label: "Cache", icon: DatabaseIcon },
 ]
 
 /**

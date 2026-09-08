@@ -1,5 +1,6 @@
 using System.Reflection;
 using Microsoft.AspNetCore.SignalR;
+using StruxRelay.Cache;
 using StruxRelay.Data;
 using StruxRelay.Devices;
 using StruxRelay.Models;
@@ -26,7 +27,11 @@ internal sealed class RelayHub(
     PairingStore pairing,
     DeviceDirectory directory,
     DeviceRegistry registry,
-    TelemetryRouter telemetry) : Hub
+    TelemetryRouter telemetry,
+    FrontendCache cache,
+    CacheDirectory cacheDirectory,
+    CacheWarmer warmer,
+    IHubContext<RelayHub> hub) : Hub
 {
     /// <summary>
     /// Who is currently watching the live telemetry feed. A group rather than
@@ -100,4 +105,63 @@ internal sealed class RelayHub(
 
     public Task UnsubscribeTelemetry() =>
         Groups.RemoveFromGroupAsync(Context.ConnectionId, TelemetryGroup);
+
+    // ── the frontend cache ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Cache statistics, the real policy, and a row per approved device. Read on
+    /// demand rather than pushed: unlike telemetry these numbers only move when
+    /// somebody loads a device page or warms one, and "CacheChanged" covers the
+    /// actions taken from here.
+    /// </summary>
+    public Task<CacheView> GetCache() =>
+        cacheDirectory.ViewAsync(Context.ConnectionAborted);
+
+    /// <summary>
+    /// Pulls one device's frontend into the cache, through the same fetch a page
+    /// load uses — there is no second downloader, so a browser arriving mid-warm
+    /// shares the in-flight fetch rather than starting its own.
+    /// </summary>
+    public async Task<CacheActionResult> WarmDeviceCache(string deviceId)
+    {
+        var result = await warmer.WarmDeviceAsync(deviceId, Context.ConnectionAborted);
+        await AnnounceCacheAsync();
+        return new CacheActionResult(result.Ok, result.Error, result.Warmed);
+    }
+
+    public async Task<CacheActionResult> ClearDeviceCache(string deviceId)
+    {
+        var dropped = cache.DropDevice(deviceId);
+        await AnnounceCacheAsync();
+        return new CacheActionResult(true, null, dropped);
+    }
+
+    /// <summary>
+    /// Warms every connected device. Sequential on purpose: each warm takes its
+    /// device's pipe several times over, and there is exactly one in flight per
+    /// device anyway, so running them together would only queue.
+    /// </summary>
+    public async Task<CacheActionResult> WarmAllCaches()
+    {
+        var warmed = 0;
+        foreach (var device in registry.Connected())
+        {
+            var result = await warmer.WarmAsync(device, Context.ConnectionAborted);
+            if (result.Ok)
+                warmed++;
+        }
+
+        await AnnounceCacheAsync();
+        return new CacheActionResult(true, null, warmed);
+    }
+
+    public async Task<CacheActionResult> ClearAllCaches()
+    {
+        var dropped = cache.Clear();
+        await AnnounceCacheAsync();
+        return new CacheActionResult(true, null, dropped);
+    }
+
+    /// <summary>Tells every open Cache page to re-read, including the one that acted.</summary>
+    private Task AnnounceCacheAsync() => hub.Clients.All.SendAsync("CacheChanged");
 }

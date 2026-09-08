@@ -49,3 +49,10 @@ export function duration(iso: string | null): string {
 
   return `${Math.floor(hours / 24)}d`
 }
+
+/** "3.8 MB" — sizes as an operator reads them, not as bytes. */
+export function bytes(value: number): string {
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}

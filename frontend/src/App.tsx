@@ -10,6 +10,7 @@ import {
   type RelayPage,
   type View,
 } from "@/components/app/navigation"
+import { CachePage } from "@/components/app/cache-page"
 import { TelemetryPage } from "@/components/app/telemetry-page"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
@@ -103,6 +104,8 @@ function Workspace() {
             <DevicePage device={selected} item={activeItem} />
           ) : relayPage === "telemetry" ? (
             <TelemetryPage />
+          ) : relayPage === "cache" ? (
+            <CachePage />
           ) : (
             <DevicesPage
               devices={devices}

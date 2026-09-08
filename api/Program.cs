@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using StruxRelay.Cache;
 using StruxRelay.Data;
 using StruxRelay.Devices;
 using StruxRelay.Hubs;
@@ -30,6 +31,14 @@ builder.Services.AddSingleton<PairingStore>();
 // Singletons because a device's pipe outlives any request but the one holding it.
 builder.Services.AddSingleton<DeviceRegistry>();
 builder.Services.AddSingleton<DeviceDirectory>();
+
+// The device frontend cache. One instance for the process: entries are keyed by
+// device and live for that device's connection.
+builder.Services.Configure<CacheOptions>(
+    builder.Configuration.GetSection(CacheOptions.Section));
+builder.Services.AddSingleton<FrontendCache>();
+builder.Services.AddSingleton<CacheWarmer>();
+builder.Services.AddSingleton<CacheDirectory>();
 
 // Telemetry. Bound the ordinary way, so appsettings.json and
 // Relay__Telemetry__Influx__Token both work with nothing custom.
@@ -80,6 +89,19 @@ app.MapHub<RelayHub>("/hub");
 // with index.html, and the device reported "relay refused the upgrade with HTTP
 // 200" — a refusal that names the wrong cause.
 app.MapGet("/device", DevicePipe.HandleAsync);
+
+// The device's own frontend, proxied over its pipe and served from the cache when
+// it can be. Not an API — a browser fetches these by URL, and an ES module import
+// needs a real one with a real MIME type — so it is HTTP and not the hub.
+// One route, not two: the handler decides about the trailing slash, because the
+// two spellings match the same template here.
+app.MapGet("/devices/{deviceId}/{**path}", (
+        HttpContext context,
+        string deviceId,
+        string? path,
+        DeviceRegistry registry,
+        FrontendCache cache) =>
+    DeviceFrontend.HandleAsync(context, deviceId, path ?? "", registry, cache));
 
 // Liveness only, and the one HTTP endpoint that is not a file: the container
 // healthcheck needs something to ask, and a connected device is not a health

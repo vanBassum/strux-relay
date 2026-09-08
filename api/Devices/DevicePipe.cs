@@ -1,3 +1,5 @@
+using StruxRelay.Cache;
+using Microsoft.Extensions.Options;
 using StruxRelay.Data;
 using StruxRelay.Telemetry;
 
@@ -21,6 +23,9 @@ internal static class DevicePipe
         PairingStore pairing,
         DeviceRegistry registry,
         TelemetryRouter telemetry,
+        FrontendCache cache,
+        CacheWarmer warmer,
+        IOptions<CacheOptions> cacheOptions,
         ILoggerFactory loggers)
     {
         var logger = loggers.CreateLogger(typeof(DevicePipe).FullName!);
@@ -71,10 +76,22 @@ internal static class DevicePipe
             deviceId, firmware, name, project, address, socket, telemetry, logger);
 
         await registry.AddAsync(connection);
+
+        // Connect is the cache's invalidation point, and the only one it needs: a
+        // device's content cannot change without a reboot, and a reboot lands
+        // here. Everything cached for the old connection goes, and the new one is
+        // warmed in the background — so the files are pulled once, now, instead of
+        // during somebody's first page load.
+        var dropped = cache.DropDevice(deviceId);
+
         logger.LogInformation(
-            "device {DeviceId} connected on pipe #{Pipe} ({Name} fw {Firmware}) from {Address}",
+            "device {DeviceId} connected on pipe #{Pipe} ({Name} fw {Firmware}) from {Address}{Dropped}",
             deviceId, connection.Pipe, string.IsNullOrEmpty(name) ? "unnamed" : name,
-            firmware, address);
+            firmware, address,
+            dropped > 0 ? $" — dropped {dropped} cached files" : "");
+
+        if (cacheOptions.Value.WarmOnConnect)
+            warmer.Start(connection);
 
         try
         {

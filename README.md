@@ -7,7 +7,7 @@ its LAN. Devices dial **out** to it, so there is no port forward and no VPN.
 device  ──ws──►  /device?id=<id>&fw=<ver>     outbound, NAT-friendly
 browser ──ws──►  /hub                         the dashboard's own API (SignalR)
 browser ──ws──►  /devices/<id>/ws             relayed onto the device pipe  (not ported)
-browser ──http─►  /devices/<id>/{path}        → `web read` on the device      (not ported)
+browser ──http─►  /devices/<id>/{path}        → `web read`, served from cache
 ```
 
 ASP.NET Core on .NET 10, with a React + shadcn/ui dashboard. It replaced a
@@ -153,16 +153,42 @@ A device sends nothing until `telem.enabled` is set, and that setting is read
 once at boot — `TelemetryManager::Init` returns early when it is off — so
 enabling it needs a reboot, not just `settings save`.
 
+## The frontend cache
+
+A device's own frontend is served through the relay at `/devices/<id>/…`, from a
+cache keyed on `(deviceId, path)`.
+
+**A connection is the cache's lifetime.** Entries are dropped when a device
+connects and kept for as long as that connection lasts — no TTL and no
+revalidation, because the only moment a device's content can change under us is
+one we already see: it has to reboot, and rebooting drops the pipe. The one case
+connect cannot see is `www` replaced on a running device; Clear is the answer.
+
+Fresh connections are **warmed** in the background: index.html, then the assets
+it names. Fetching what it *names* rather than crawling the partition keeps this
+to the files actually served, and stays correct across a rebuild for free — a new
+build names new files. Warming goes through the same fetch a page load uses, so a
+browser arriving mid-warm shares the in-flight fetch instead of starting a second.
+
+The immutable/mutable split is about what the **browser** is told, not about
+server-side lifetime: a vite content-hashed `/assets/name-<hash>.js` gets
+`immutable` for a year, so a second page load costs no pipe traffic at all, while
+index.html gets `no-cache` and usually a 304 off the ETag.
+
+```jsonc
+"Relay": { "Cache": { "MaxBytes": 33554432, "WarmOnConnect": true } }
+```
+
+Bytes rather than entries, because a frontend is one small index.html and one
+large bundle and it is the bundle that decides whether this fits in a container.
+Eviction is least-recently-used. The Cache page shows the real policy, per-device
+size/files/last-warmed/last-used, and Warm and Clear per device or for everything.
+
 ## Not ported yet
 
-Carried over from the Python relay and still missing here:
-
-* **The browser pipe** (`/devices/<id>/ws`) and the **file proxy**
-  (`/devices/<id>/{path}`), so a device's own UI cannot be opened through the
-  relay. `WebReadAsync` exists but nothing calls it.
-* **The file cache**, whose lifetime was the device's connection, along with the
-  warming that pulled a freshly connected device's frontend in one go. Nothing
-  is cached today, so there is nothing to observe or manage yet.
+* **The browser pipe** (`/devices/<id>/ws`), so a device's UI can be *served*
+  through the relay but cannot yet talk back to its device over the pipe. Session
+  0 log broadcasts have nowhere to go until this lands.
 
 Also missing, and never present: TLS (the proxy's job), and any way to block a
 device for good — rejecting only forgets it, and a refused device keeps retrying.
