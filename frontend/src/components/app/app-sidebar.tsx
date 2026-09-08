@@ -1,4 +1,4 @@
-import { RadioTowerIcon } from "lucide-react"
+import { HardDriveIcon, RadioTowerIcon } from "lucide-react"
 
 import {
   Sidebar,
@@ -11,19 +11,32 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarSeparator,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
-import { PAGES, type Page } from "@/components/app/navigation"
+import { DeviceContext } from "@/components/app/device-context"
+import type { Device } from "@/hooks/use-devices"
 import type { Session } from "@/hooks/use-relay"
+import { navIcon, type DeviceNavItem } from "@/lib/device-nav"
 
 export function AppSidebar({
-  active,
   session,
-  onSelect,
+  onRelayHome,
+  atRelayHome,
+  device,
+  deviceNav,
+  devicePage,
+  onDevicePage,
 }: {
-  active: Page
   session: Session | null
-  onSelect: (page: Page) => void
+  onRelayHome: () => void
+  atRelayHome: boolean
+  /** The device in scope, or null when the device list is showing. */
+  device: Device | null
+  /** Supplied per device, so a manifest can replace the source without touching this. */
+  deviceNav: DeviceNavItem[]
+  devicePage: string | null
+  onDevicePage: (page: string) => void
 }) {
   return (
     // "icon" rather than "offcanvas": collapsing narrows the rail to the icons
@@ -42,26 +55,58 @@ export function AppSidebar({
       </SidebarHeader>
 
       <SidebarContent>
+        {/* Navigation the relay owns. Devices stays here whatever is selected, so
+            there is always a way back to the list. */}
         <SidebarGroup>
           <SidebarGroupLabel>Relay</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {PAGES.map(({ page, icon: Icon }) => (
-                <SidebarMenuItem key={page}>
-                  {/* The tooltip is what names the page once the label is gone. */}
-                  <SidebarMenuButton
-                    isActive={page === active}
-                    tooltip={page}
-                    onClick={() => onSelect(page)}
-                  >
-                    <Icon />
-                    <span>{page}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={atRelayHome}
+                  tooltip="Devices"
+                  onClick={onRelayHome}
+                >
+                  <HardDriveIcon />
+                  <span>Devices</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {/* Everything below belongs to one device, and the separator plus its own
+            labelled group is what says so. Absent entirely when no device is in
+            scope, rather than present and empty — an empty DEVICE heading would
+            imply a device that contributes nothing. */}
+        {device && (
+          <>
+            <SidebarSeparator />
+            <SidebarGroup>
+              <SidebarGroupLabel>Device</SidebarGroupLabel>
+              <SidebarGroupContent className="flex flex-col gap-2">
+                <DeviceContext device={device} />
+                <SidebarMenu>
+                  {deviceNav.map((item) => {
+                    const Icon = navIcon(item.icon)
+                    return (
+                      <SidebarMenuItem key={item.id}>
+                        <SidebarMenuButton
+                          isActive={item.id === devicePage}
+                          tooltip={item.label}
+                          onClick={() => onDevicePage(item.id)}
+                        >
+                          <Icon />
+                          <span>{item.label}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )
+                  })}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </>
+        )}
       </SidebarContent>
 
       <SidebarFooter>

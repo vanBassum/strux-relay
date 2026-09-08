@@ -93,3 +93,5 @@ export function useDevices() {
 
   return { devices, loading, approve, forget }
 }
+
+export type DeviceList = ReturnType<typeof useDevices>

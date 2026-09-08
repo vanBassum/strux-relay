@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/table"
 import { ChoiceFilter } from "@/components/app/device-filters"
 import { DeviceUrl } from "@/components/app/device-url"
-import { useDevices, type Device } from "@/hooks/use-devices"
+import type { Device, DeviceList } from "@/hooks/use-devices"
 import { useNow } from "@/hooks/use-now"
 import {
   APPROVAL_OPTIONS,
@@ -80,8 +80,15 @@ function SortableHead({
   )
 }
 
-export function DevicesPage() {
-  const { devices, loading, approve, forget } = useDevices()
+export function DevicesPage({
+  devices: list,
+  onOpen,
+}: {
+  /** Passed in rather than fetched here: the sidebar reads the same list. */
+  devices: DeviceList
+  onOpen: (deviceId: string) => void
+}) {
+  const { devices, loading, approve, forget } = list
 
   // Relative times are rendered, not stored, so something has to re-render them.
   useNow()
@@ -196,6 +203,7 @@ export function DevicesPage() {
                   device={device}
                   onApprove={approve}
                   onForget={forget}
+                  onOpen={onOpen}
                 />
               ))
             )}
@@ -255,10 +263,12 @@ function DeviceRow({
   device,
   onApprove,
   onForget,
+  onOpen,
 }: {
   device: Device
   onApprove: (device: Device) => Promise<void>
   onForget: (device: Device) => Promise<void>
+  onOpen: (deviceId: string) => void
 }) {
   const online = device.connection === "online"
 
@@ -324,6 +334,18 @@ function DeviceRow({
       <TableCell className="font-mono text-xs">{device.firmware}</TableCell>
       <TableCell className="text-right">
         <div className="flex justify-end gap-1">
+          {/* Opening scopes the shell to this device. Offered for an offline one
+              too: its pages are where its own settings and history will live,
+              and those are worth reaching whether or not it is up right now. */}
+          {device.approval === "approved" && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onOpen(device.deviceId)}
+            >
+              Open
+            </Button>
+          )}
           {device.approval === "pending" && (
             <Button size="sm" onClick={() => void onApprove(device)}>
               Approve

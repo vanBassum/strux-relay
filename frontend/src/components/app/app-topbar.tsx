@@ -1,5 +1,6 @@
+import { ChevronRightIcon } from "lucide-react"
+
 import { Button } from "@/components/ui/button"
-import type { Page } from "@/components/app/navigation"
 import type { ConnectionState } from "@/hooks/use-relay"
 
 const DOTS: Record<ConnectionState, string> = {
@@ -9,20 +10,49 @@ const DOTS: Record<ConnectionState, string> = {
   disconnected: "bg-destructive",
 }
 
+export type Crumb = { label: string; onClick?: () => void }
+
 export function AppTopbar({
-  page,
+  trail,
   state,
   onRetry,
 }: {
-  page: Page
+  /** Last entry is where you are; earlier ones with an onClick are the way back. */
+  trail: Crumb[]
   state: ConnectionState
   onRetry: () => void
 }) {
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
-      <span className="text-sm font-medium">{page}</span>
+      <nav className="flex min-w-0 items-center gap-1 text-sm">
+        {trail.map((crumb, index) => {
+          const last = index === trail.length - 1
+          return (
+            <span key={crumb.label} className="flex min-w-0 items-center gap-1">
+              {index > 0 && (
+                <ChevronRightIcon className="text-muted-foreground size-3.5 shrink-0" />
+              )}
+              {crumb.onClick && !last ? (
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground truncate"
+                  onClick={crumb.onClick}
+                >
+                  {crumb.label}
+                </button>
+              ) : (
+                <span
+                  className={`truncate ${last ? "font-medium" : "text-muted-foreground"}`}
+                >
+                  {crumb.label}
+                </span>
+              )}
+            </span>
+          )
+        })}
+      </nav>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-2">
         <span className="text-muted-foreground flex items-center gap-1.5 text-xs">
           <span className={`size-1.5 rounded-full ${DOTS[state]}`} />
           {state}
