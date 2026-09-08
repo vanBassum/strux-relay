@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+relay.db
+relay.db-wal
+relay.db-shm
