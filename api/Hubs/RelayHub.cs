@@ -1,6 +1,7 @@
 using System.Reflection;
 using Microsoft.AspNetCore.SignalR;
 using StruxRelay.Data;
+using StruxRelay.Devices;
 using StruxRelay.Models;
 
 namespace StruxRelay.Hubs;
@@ -20,7 +21,10 @@ namespace StruxRelay.Hubs;
 /// already decided who is asking. There is no additional check: whoever can open
 /// the dashboard is an operator, because that is what the proxy provider grants.
 /// </summary>
-internal sealed class RelayHub(PairingStore pairing) : Hub
+internal sealed class RelayHub(
+    PairingStore pairing,
+    DeviceDirectory directory,
+    DeviceRegistry registry) : Hub
 {
     private static readonly string Version =
         Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
@@ -32,13 +36,13 @@ internal sealed class RelayHub(PairingStore pairing) : Hub
     public Session GetSession() => new(new Health("ok", Version));
 
     /// <summary>
-    /// The pairing lists: refused attempts waiting for a decision, the approvals
-    /// that stand, and the recent state changes. This is the state a dashboard
-    /// catches up on when it opens; after that the store pushes "PairingChanged"
-    /// to everyone, so nothing here is polled.
+    /// Every device the relay knows about, approved or waiting, connected or not.
+    /// This is the state a dashboard catches up on when it opens; after that the
+    /// pairing store pushes "PairingChanged" and the registry pushes
+    /// "DevicesChanged", so nothing here is polled.
     /// </summary>
-    public Task<PairingState> GetPairing() =>
-        pairing.GetStateAsync(cancellationToken: Context.ConnectionAborted);
+    public Task<IReadOnlyList<DeviceView>> GetDevices() =>
+        directory.ListAsync(Context.ConnectionAborted);
 
     /// <summary>
     /// Approve one pending pair. Addressed by the PAIR and not the id, because two
@@ -52,14 +56,18 @@ internal sealed class RelayHub(PairingStore pairing) : Hub
         pairing.ApproveAsync(deviceId, token, Context.ConnectionAborted);
 
     /// <summary>
-    /// Revoke a device: its approval, its pending rows, and — once the pipe lands —
-    /// its live socket and anything cached for it. The token is only checked when a
-    /// connection is made, so a revoked device that is already connected stays
-    /// connected until it is dropped.
+    /// Revoke a device: its approval, its pending rows, and its live pipe. The last
+    /// one matters — the token is only checked when a connection is made, so a
+    /// revoked device would otherwise stay connected until it happened to drop.
+    ///
+    /// On a device that was only pending this is a reject, and it is not a block: a
+    /// refused device keeps retrying, so it will reappear as pending. Refusing for
+    /// good would need a state the relay does not have yet.
     /// </summary>
-    public Task<ForgetResult> Forget(string deviceId) =>
-        pairing.ForgetAsync(deviceId, Context.ConnectionAborted);
-
-    // Still to come with the pipe, since each one reads live connection state:
-    // GetDevices (the connected list), FlushCache, and the telemetry counters.
+    public async Task<ForgetResult> Forget(string deviceId)
+    {
+        var result = await pairing.ForgetAsync(deviceId, Context.ConnectionAborted);
+        await registry.DropAsync(deviceId);
+        return result;
+    }
 }

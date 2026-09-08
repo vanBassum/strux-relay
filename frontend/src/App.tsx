@@ -1,20 +1,46 @@
-import { Button } from "@/components/ui/button"
+import { useState } from "react"
+
+import { AppSidebar } from "@/components/app/app-sidebar"
+import { AppTopbar } from "@/components/app/app-topbar"
+import { DevicesPage } from "@/components/app/devices-page"
+import { DEFAULT_PAGE, type Page } from "@/components/app/navigation"
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
+import { Toaster } from "@/components/ui/sonner"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import { RelayProvider, useRelay, useRelayContext } from "@/hooks/use-relay"
+
+/** Split from App so everything below it can reach the hub through the context. */
+function Workspace() {
+  const { state, session, reconnect } = useRelayContext()
+  const [page, setPage] = useState<Page>(DEFAULT_PAGE)
+
+  return (
+    <>
+      <AppSidebar active={page} session={session} onSelect={setPage} />
+      {/* min-h-0 so the page gives up room to the bar pinned above it, rather
+          than growing and pushing it off the top of the window. */}
+      <SidebarInset className="min-h-0">
+        <AppTopbar page={page} state={state} onRetry={reconnect} />
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <DevicesPage />
+        </div>
+      </SidebarInset>
+    </>
+  )
+}
 
 export function App() {
+  const relay = useRelay()
+
   return (
-    <div className="flex min-h-svh p-6">
-      <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
-        </div>
-        <div className="font-mono text-xs text-muted-foreground">
-          (Press <kbd>d</kbd> to toggle dark mode)
-        </div>
-      </div>
-    </div>
+    <RelayProvider value={relay}>
+      <TooltipProvider>
+        <SidebarProvider>
+          <Workspace />
+        </SidebarProvider>
+      </TooltipProvider>
+      <Toaster />
+    </RelayProvider>
   )
 }
 

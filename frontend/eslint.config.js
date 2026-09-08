@@ -6,7 +6,10 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // components/ui and use-mobile are shadcn's generated files: they export
+  // variants beside components and set state in an effect, both of which this
+  // config rejects. Same exclusion the Technician Toolbox uses.
+  globalIgnores(['dist', 'src/components/ui', 'src/hooks/use-mobile.ts']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

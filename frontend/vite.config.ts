@@ -1,4 +1,4 @@
-import path from "path"
+import path from "node:path"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
@@ -11,14 +11,14 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
   build: {
     // Straight into the API project, which serves it with UseStaticFiles. Unlike
     // Strux's own frontend there is no gzip step: nothing here lands on a flash
     // partition, so compression is the server's job at serve time.
-    outDir: path.resolve(__dirname, "../api/wwwroot"),
+    outDir: path.resolve(import.meta.dirname, "../api/wwwroot"),
     emptyOutDir: true,
   },
   server: {
