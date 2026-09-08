@@ -24,7 +24,14 @@ export function ChoiceFilter<T extends string>({
   return (
     <Select value={value} onValueChange={(next) => onChange(next as T)}>
       <SelectTrigger size="sm" aria-label={label}>
-        <SelectValue />
+        {/* SelectValue renders the VALUE unless told otherwise, so without this
+            the trigger read "all" — the stored value rather than the option's
+            label, which said nothing about what the dropdown filters. */}
+        <SelectValue>
+          {(selected: T) =>
+            options.find((option) => option.value === selected)?.label ?? selected
+          }
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         {options.map((option) => (
