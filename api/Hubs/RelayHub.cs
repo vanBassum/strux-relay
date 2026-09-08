@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.SignalR;
 using StruxRelay.Data;
 using StruxRelay.Devices;
 using StruxRelay.Models;
+using StruxRelay.Telemetry;
 
 namespace StruxRelay.Hubs;
 
@@ -24,8 +25,16 @@ namespace StruxRelay.Hubs;
 internal sealed class RelayHub(
     PairingStore pairing,
     DeviceDirectory directory,
-    DeviceRegistry registry) : Hub
+    DeviceRegistry registry,
+    TelemetryRouter telemetry) : Hub
 {
+    /// <summary>
+    /// Who is currently watching the live telemetry feed. A group rather than
+    /// broadcasting to everyone, because telemetry runs at device rate and a
+    /// dashboard sitting on the device list has no use for it.
+    /// </summary>
+    public const string TelemetryGroup = "telemetry";
+
     private static readonly string Version =
         Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
 
@@ -70,4 +79,25 @@ internal sealed class RelayHub(
         await registry.DropAsync(deviceId);
         return result;
     }
+
+    /// <summary>
+    /// Sink state and the in-memory counters. What a page catches up on when it
+    /// opens; after that the router pushes "TelemetryStatus" about once a second,
+    /// because these numbers move continuously and polling them would be silly.
+    /// </summary>
+    public TelemetryStatusView GetTelemetry() =>
+        TelemetryViews.Status(telemetry.SinkStatus, telemetry.Counters.Snapshot());
+
+    /// <summary>
+    /// Start receiving "TelemetryEvents" pushes.
+    ///
+    /// Nothing is replayed, and there is nothing to replay: the relay keeps no
+    /// telemetry history, so a subscriber sees what arrives from now on. The
+    /// bounded list of recent events lives in the browser.
+    /// </summary>
+    public Task SubscribeTelemetry() =>
+        Groups.AddToGroupAsync(Context.ConnectionId, TelemetryGroup);
+
+    public Task UnsubscribeTelemetry() =>
+        Groups.RemoveFromGroupAsync(Context.ConnectionId, TelemetryGroup);
 }

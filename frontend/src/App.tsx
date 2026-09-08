@@ -4,7 +4,13 @@ import { AppSidebar } from "@/components/app/app-sidebar"
 import { AppTopbar } from "@/components/app/app-topbar"
 import { DevicePage } from "@/components/app/device-page"
 import { DevicesPage } from "@/components/app/devices-page"
-import { RELAY_HOME, type View } from "@/components/app/navigation"
+import {
+  RELAY_HOME,
+  RELAY_PAGES,
+  type RelayPage,
+  type View,
+} from "@/components/app/navigation"
+import { TelemetryPage } from "@/components/app/telemetry-page"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -53,12 +59,16 @@ function Workspace() {
 
   const onDevice = view.kind === "device" && selected !== null && activeItem !== null
 
+  // Devices is where a device view lands when its device stops resolving, so the
+  // shell never shows nothing.
+  const relayPage: RelayPage = view.kind === "relay" ? view.page : "devices"
+
   return (
     <>
       <AppSidebar
         session={session}
-        atRelayHome={view.kind === "devices"}
-        onRelayHome={() => setView(RELAY_HOME)}
+        relayPage={onDevice ? null : relayPage}
+        onRelayPage={(page) => setView({ kind: "relay", page })}
         device={selected}
         deviceNav={deviceNav}
         // Nothing is the active page while the list is showing, even though a
@@ -79,12 +89,20 @@ function Workspace() {
                   { label: selected.name || selected.deviceId },
                   { label: activeItem.label },
                 ]
-              : [{ label: "Devices" }]
+              : [
+                  {
+                    label:
+                      RELAY_PAGES.find((page) => page.id === relayPage)?.label ??
+                      "Devices",
+                  },
+                ]
           }
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {onDevice ? (
             <DevicePage device={selected} item={activeItem} />
+          ) : relayPage === "telemetry" ? (
+            <TelemetryPage />
           ) : (
             <DevicesPage
               devices={devices}

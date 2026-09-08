@@ -1,4 +1,4 @@
-import { HardDriveIcon, RadioTowerIcon } from "lucide-react"
+import { RadioTowerIcon } from "lucide-react"
 
 import {
   Sidebar,
@@ -15,22 +15,24 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { DeviceContext } from "@/components/app/device-context"
+import { RELAY_PAGES, type RelayPage } from "@/components/app/navigation"
 import type { Device } from "@/hooks/use-devices"
 import type { Session } from "@/hooks/use-relay"
 import { navIcon, type DeviceNavItem } from "@/lib/device-nav"
 
 export function AppSidebar({
   session,
-  onRelayHome,
-  atRelayHome,
+  relayPage,
+  onRelayPage,
   device,
   deviceNav,
   devicePage,
   onDevicePage,
 }: {
   session: Session | null
-  onRelayHome: () => void
-  atRelayHome: boolean
+  /** Which relay page is showing, or null while a device page is. */
+  relayPage: RelayPage | null
+  onRelayPage: (page: RelayPage) => void
   /** The device in scope, or null when the device list is showing. */
   device: Device | null
   /** Supplied per device, so a manifest can replace the source without touching this. */
@@ -61,16 +63,18 @@ export function AppSidebar({
           <SidebarGroupLabel>Relay</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={atRelayHome}
-                  tooltip="Devices"
-                  onClick={onRelayHome}
-                >
-                  <HardDriveIcon />
-                  <span>Devices</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {RELAY_PAGES.map(({ id, label, icon: Icon }) => (
+                <SidebarMenuItem key={id}>
+                  <SidebarMenuButton
+                    isActive={id === relayPage}
+                    tooltip={label}
+                    onClick={() => onRelayPage(id)}
+                  >
+                    <Icon />
+                    <span>{label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

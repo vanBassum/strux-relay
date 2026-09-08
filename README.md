@@ -113,6 +113,46 @@ users; there are no accounts here. `/device` cannot be, because a device cannot
 follow a login redirect — hence the token, and hence `/device` being its own path
 rather than the base URL.
 
+## Telemetry
+
+Devices emit InfluxDB **line protocol** on session `0xFFFF`, already formatted —
+one line per chunk. The relay forwards those bytes untouched; it reads a line
+only to fill the diagnostics table, never to rewrite one.
+
+Where it goes is configuration, and InfluxDB is the first sink rather than the
+only shape allowed:
+
+```jsonc
+"Relay": {
+  "Telemetry": {
+    "QueueCapacity": 10000,        // bounded — a sink that is down costs a gap, not memory
+    "BatchSize": 500,
+    "MaxBatchAge": "00:00:05",
+    "Influx": { "Url": "", "Token": "", "Org": "", "Bucket": "", "Timeout": "00:00:10" }
+  }
+}
+```
+
+In a container that is `Relay__Telemetry__Influx__Url` and friends. **Note the
+rename:** the Python relay read `INFLUX_URL` / `INFLUX_TOKEN` / `INFLUX_ORG` /
+`INFLUX_BUCKET`, and those names are not read any more — a compose file carrying
+them will leave telemetry unconfigured rather than fail.
+
+Adding a second destination is a class beside `InfluxTelemetrySink` and one line
+in `Program.cs`: `TelemetryRouter` handles queueing, batching, counters and the
+live feed, and knows no sink-specific vocabulary.
+
+**The relay is not a telemetry store.** Counters are in memory and reset on
+restart, nothing is persisted, and a point that cannot be forwarded is dropped
+rather than retried. The Telemetry page stays useful with no sink configured:
+points still arrive, are counted and shown live, and are counted as dropped for
+"no sink configured" — which is what lets the device→relay half be verified on
+its own. The live table lives in the browser and goes on refresh.
+
+A device sends nothing until `telem.enabled` is set, and that setting is read
+once at boot — `TelemetryManager::Init` returns early when it is off — so
+enabling it needs a reboot, not just `settings save`.
+
 ## Not ported yet
 
 Carried over from the Python relay and still missing here:
@@ -120,10 +160,9 @@ Carried over from the Python relay and still missing here:
 * **The browser pipe** (`/devices/<id>/ws`) and the **file proxy**
   (`/devices/<id>/{path}`), so a device's own UI cannot be opened through the
   relay. `WebReadAsync` exists but nothing calls it.
-* **The file cache**, whose lifetime was the device's connection.
-* **Telemetry forwarding.** Session 0xFFFF is recognised and dropped with a
-  warning; there is no sink. It should come back as a configurable destination
-  rather than InfluxDB only.
+* **The file cache**, whose lifetime was the device's connection, along with the
+  warming that pulled a freshly connected device's frontend in one go. Nothing
+  is cached today, so there is nothing to observe or manage yet.
 
 Also missing, and never present: TLS (the proxy's job), and any way to block a
 device for good — rejecting only forgets it, and a refused device keeps retrying.

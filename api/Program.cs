@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using StruxRelay.Data;
 using StruxRelay.Devices;
 using StruxRelay.Hubs;
+using StruxRelay.Telemetry;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,6 +30,23 @@ builder.Services.AddSingleton<PairingStore>();
 // Singletons because a device's pipe outlives any request but the one holding it.
 builder.Services.AddSingleton<DeviceRegistry>();
 builder.Services.AddSingleton<DeviceDirectory>();
+
+// Telemetry. Bound the ordinary way, so appsettings.json and
+// Relay__Telemetry__Influx__Token both work with nothing custom.
+builder.Services.Configure<TelemetryOptions>(
+    builder.Configuration.GetSection(TelemetryOptions.Section));
+builder.Services.AddHttpClient(nameof(InfluxTelemetrySink));
+
+// The sink is registered behind its interface, which is the whole point: adding a
+// second destination is a registration here and a class beside the Influx one,
+// with nothing in the router or the hub to change.
+builder.Services.AddSingleton<ITelemetrySink, InfluxTelemetrySink>();
+
+// One instance, two roles: the pipe ingests into it and the host runs its flush
+// loop, so it is registered as itself and then handed to AddHostedService rather
+// than constructed twice.
+builder.Services.AddSingleton<TelemetryRouter>();
+builder.Services.AddHostedService(services => services.GetRequiredService<TelemetryRouter>());
 
 var app = builder.Build();
 

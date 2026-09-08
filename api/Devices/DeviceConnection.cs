@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using StruxRelay.Models;
+using StruxRelay.Telemetry;
 
 namespace StruxRelay.Devices;
 
@@ -37,6 +38,7 @@ internal sealed class DeviceConnection
     private static int sequence;
 
     private readonly WebSocket socket;
+    private readonly TelemetryRouter telemetry;
     private readonly ILogger logger;
 
     /// <summary>The relay's own web-read calls, by the session id it minted.</summary>
@@ -62,7 +64,6 @@ internal sealed class DeviceConnection
     private CancellationTokenSource? gateWatchdog;
 
     private ushort nextServerId = SessionChunk.ServerIdBase;
-    private bool telemetryNoticed;
 
     public DeviceConnection(
         string deviceId,
@@ -71,6 +72,7 @@ internal sealed class DeviceConnection
         string project,
         string? address,
         WebSocket socket,
+        TelemetryRouter telemetry,
         ILogger logger)
     {
         Pipe = Interlocked.Increment(ref sequence);
@@ -83,6 +85,7 @@ internal sealed class DeviceConnection
         Project = project;
         Address = address;
         this.socket = socket;
+        this.telemetry = telemetry;
         this.logger = logger;
     }
 
@@ -184,13 +187,10 @@ internal sealed class DeviceConnection
 
         if (session == SessionChunk.TelemetrySession)
         {
-            if (!telemetryNoticed)
-            {
-                telemetryNoticed = true;
-                logger.LogWarning(
-                    "device {DeviceId} is sending telemetry; this relay has no sink yet, dropping",
-                    DeviceId);
-            }
+            // Handed over by identity rather than by connection: the router has
+            // no business knowing what a pipe is, and the device's own `device`
+            // tag is not trusted for attribution.
+            telemetry.Ingest(DeviceId, Name, payload.Span);
             return;
         }
 
@@ -432,15 +432,14 @@ internal sealed class DeviceConnection
         // teardown gets logged long after the new pipe is serving, which reads
         // exactly like the live device dropping. That cost an afternoon of chasing
         // a phantom reconnect loop; the device was fine the whole time.
-        try
-        {
-            if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
-                await socket.CloseAsync(
-                    WebSocketCloseStatus.NormalClosure, "replaced", CancellationToken.None);
-        }
-        catch (WebSocketException)
-        {
-            // Already gone, which is the outcome we wanted.
-        }
+        //
+        // Abort, not CloseAsync. This is almost always called from a DIFFERENT task
+        // than the read loop — a reconnect closing the pipe it replaced — and the
+        // read loop is sitting in ReceiveAsync at that moment. Closing a socket with
+        // a receive outstanding is invalid, and it threw right past the
+        // WebSocketException this used to catch. Abort is synchronous, cancels the
+        // pending receive, and cannot fail; a graceful close would only buy a close
+        // frame for a pipe whose device has already moved to another one.
+        socket.Abort();
     }
 }

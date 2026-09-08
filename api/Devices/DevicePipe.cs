@@ -1,4 +1,5 @@
 using StruxRelay.Data;
+using StruxRelay.Telemetry;
 
 namespace StruxRelay.Devices;
 
@@ -19,6 +20,7 @@ internal static class DevicePipe
         HttpContext context,
         PairingStore pairing,
         DeviceRegistry registry,
+        TelemetryRouter telemetry,
         ILoggerFactory loggers)
     {
         var logger = loggers.CreateLogger(typeof(DevicePipe).FullName!);
@@ -66,7 +68,7 @@ internal static class DevicePipe
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
         var connection = new DeviceConnection(
-            deviceId, firmware, name, project, address, socket, logger);
+            deviceId, firmware, name, project, address, socket, telemetry, logger);
 
         await registry.AddAsync(connection);
         logger.LogInformation(
