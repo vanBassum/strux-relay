@@ -271,9 +271,33 @@ function DeviceRow({
   onOpen: (deviceId: string) => void
 }) {
   const online = device.connection === "online"
+  // Only an approved device has anything to open — a pending one has no pipe and
+  // no pages, so its row stays inert rather than clicking through to nothing.
+  const openable = device.approval === "approved"
+
+  const open = () => onOpen(device.deviceId)
 
   return (
-    <TableRow>
+    <TableRow
+      className={openable ? "cursor-pointer" : undefined}
+      // A <tr> is not a button, so the keyboard handling has to be spelled out
+      // rather than inherited: without this the whole list becomes unreachable
+      // for anyone not using a mouse.
+      role={openable ? "button" : undefined}
+      tabIndex={openable ? 0 : undefined}
+      aria-label={openable ? `Open ${device.name || device.deviceId}` : undefined}
+      onClick={openable ? open : undefined}
+      onKeyDown={
+        openable
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault()
+                open()
+              }
+            }
+          : undefined
+      }
+    >
       <TableCell>
         <div className="font-medium">{device.name || device.deviceId}</div>
         <div className="text-muted-foreground font-mono text-xs">
@@ -333,19 +357,13 @@ function DeviceRow({
       </TableCell>
       <TableCell className="font-mono text-xs">{device.firmware}</TableCell>
       <TableCell className="text-right">
-        <div className="flex justify-end gap-1">
-          {/* Opening scopes the shell to this device. Offered for an offline one
-              too: its pages are where its own settings and history will live,
-              and those are worth reaching whether or not it is up right now. */}
-          {device.approval === "approved" && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onOpen(device.deviceId)}
-            >
-              Open
-            </Button>
-          )}
+        {/* Stops here rather than on each button: approving or forgetting a
+            device must not also open it, and putting the guard on the container
+            means the next action added is covered without remembering to. */}
+        <div
+          className="flex justify-end gap-1"
+          onClick={(event) => event.stopPropagation()}
+        >
           {device.approval === "pending" && (
             <Button size="sm" onClick={() => void onApprove(device)}>
               Approve
