@@ -6,7 +6,7 @@ its LAN. Devices dial **out** to it, so there is no port forward and no VPN.
 ```
 device  ──ws──►  /device?id=<id>&fw=<ver>     outbound, NAT-friendly
 browser ──ws──►  /hub                         the dashboard's own API (SignalR)
-browser ──ws──►  /devices/<id>/ws             relayed onto the device pipe  (not ported)
+browser ──ws──►  /devices/<id>/ws             relayed onto the device pipe
 browser ──http─►  /devices/<id>/{path}        → `web read`, served from cache
 ```
 

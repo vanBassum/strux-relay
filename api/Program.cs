@@ -90,6 +90,21 @@ app.MapHub<RelayHub>("/hub");
 // 200" — a refusal that names the wrong cause.
 app.MapGet("/device", DevicePipe.HandleAsync);
 
+// The browser's end of the pipe. Mapped before the file route below — a literal
+// segment already beats a catch-all in ASP.NET's route table, so this is for the
+// reader rather than the router: the two routes share a prefix and are only
+// intelligible together.
+//
+// This is what makes a device's own web UI work remotely rather than merely load:
+// the page arrives over the route below, and every command, log line and upload it
+// does afterwards goes through here.
+app.MapGet("/devices/{deviceId}/ws", (
+        HttpContext context,
+        string deviceId,
+        DeviceRegistry registry,
+        ILoggerFactory loggers) =>
+    BrowserPipe.HandleAsync(context, deviceId, registry, loggers));
+
 // The device's own frontend, proxied over its pipe and served from the cache when
 // it can be. Not an API — a browser fetches these by URL, and an ES module import
 // needs a real one with a real MIME type — so it is HTTP and not the hub.

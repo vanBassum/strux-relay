@@ -65,6 +65,20 @@ internal sealed class DeviceConnection
 
     private ushort nextServerId = SessionChunk.ServerIdBase;
 
+    /// <summary>
+    /// The browsers watching this device, and the sessions they own. Three
+    /// structures because there are three questions, all on the hot path: who is
+    /// attached (the fan-out), which browser owns a device-side id (a reply coming
+    /// back), and which device-side id a browser's own id was rewritten to (its
+    /// next chunk). One dictionary would answer one of them by scanning.
+    /// </summary>
+    private readonly HashSet<BrowserConnection> browsers = [];
+    private readonly Dictionary<ushort, (BrowserConnection Browser, ushort BrowserSession)> browserSessions = [];
+    private readonly Dictionary<(BrowserConnection Browser, ushort BrowserSession), ushort> browserMap = [];
+    private readonly object browserLock = new();
+
+    private ushort nextBrowserId = SessionChunk.BrowserIdBase;
+
     public DeviceConnection(
         string deviceId,
         string firmware,
@@ -179,9 +193,12 @@ internal sealed class DeviceConnection
 
         if (session == SessionChunk.BroadcastSession)
         {
-            // Log lines, which go to every attached browser. Nothing is attached
-            // until the browser pipe lands, so they are dropped rather than
-            // buffered — a log line nobody is watching is not owed a queue.
+            // Log lines, which go to every attached browser — verbatim, header and
+            // all. Session 0 is the shape the browser expects, and rewriting it
+            // into that browser's id space would turn a broadcast into a reply to a
+            // request nobody made. With nobody attached they are dropped rather
+            // than buffered: a log line nobody is watching is not owed a queue.
+            await FanoutAsync(chunk, cancellationToken);
             return;
         }
 
@@ -208,8 +225,53 @@ internal sealed class DeviceConnection
             return;
         }
 
+        (BrowserConnection Browser, ushort BrowserSession) owner;
+        bool relayed;
+        lock (browserLock)
+            relayed = browserSessions.TryGetValue(session, out owner);
+
+        if (relayed)
+        {
+            // Back to the id the BROWSER minted, not the one this relay rewrote it
+            // to. The browser matches replies to requests by that id and has never
+            // seen ours.
+            var delivered = await owner.Browser.SendAsync(
+                SessionChunk.Frame(owner.BrowserSession, flags, payload.Span), cancellationToken);
+
+            if (!delivered)
+            {
+                // Gone mid-session. Dropping it releases every session it held,
+                // rather than leaving the pipe gated until the watchdog notices —
+                // and the rest of this reply has nowhere to go regardless.
+                DropBrowser(owner.Browser);
+                return;
+            }
+
+            if (SessionChunk.IsTerminal(flags))
+                ForgetBrowserSession(session, owner);
+
+            return;
+        }
+
         logger.LogWarning(
             "device {DeviceId}: chunk for unknown session {Session} (dropped)", DeviceId, session);
+    }
+
+    private async Task FanoutAsync(
+        ReadOnlyMemory<byte> chunk, CancellationToken cancellationToken)
+    {
+        BrowserConnection[] attached;
+        lock (browserLock)
+        {
+            if (browsers.Count == 0)
+                return;
+
+            attached = [.. browsers];
+        }
+
+        foreach (var browser in attached)
+            if (!await browser.SendAsync(chunk, cancellationToken))
+                DropBrowser(browser);
     }
 
     // ── relay → device ────────────────────────────────────────────────────────
@@ -230,6 +292,125 @@ internal sealed class DeviceConnection
         {
             sendLock.Release();
         }
+    }
+
+    // ── browser → device ──────────────────────────────────────────────────────
+
+    public void AttachBrowser(BrowserConnection browser)
+    {
+        lock (browserLock)
+            browsers.Add(browser);
+    }
+
+    public int BrowserCount
+    {
+        get { lock (browserLock) return browsers.Count; }
+    }
+
+    /// <summary>
+    /// One chunk from a browser, rewritten onto the device pipe. The browser's own
+    /// session id is replaced by one from the relay's browser half, because a
+    /// browser and this relay would otherwise both allocate from 1 on the same
+    /// socket — which presents as the device replying to the wrong request.
+    /// </summary>
+    public async Task RelayFromBrowserAsync(
+        BrowserConnection browser, ReadOnlyMemory<byte> chunk, CancellationToken cancellationToken)
+    {
+        if (chunk.Length < SessionChunk.HeaderSize)
+            return;
+
+        var (browserSession, flags) = SessionChunk.ReadHeader(chunk.Span);
+        var payload = chunk[SessionChunk.HeaderSize..];
+
+        ushort session;
+        bool opening;
+        lock (browserLock)
+        {
+            opening = !browserMap.TryGetValue((browser, browserSession), out session);
+            if (opening)
+            {
+                session = AllocateBrowserSession();
+                browserMap[(browser, browserSession)] = session;
+                browserSessions[session] = (browser, browserSession);
+            }
+        }
+
+        // The first chunk of a session takes the pipe and holds it until the device
+        // finals or the browser goes. Awaited outside the lock, because what it
+        // waits for is another session finishing — which can be a whole firmware
+        // upload, minutes of it.
+        if (opening)
+            await AcquireGateAsync(session, cancellationToken);
+
+        await SendAsync(session, flags, payload, cancellationToken);
+
+        // Browser → device counts as progress too, and this is the direction that
+        // matters most: a firmware upload is minutes of body chunks with the device
+        // saying almost nothing back.
+        TouchGate(session);
+    }
+
+    /// <summary>
+    /// Forgets a browser and everything it was holding. Called when its socket ends
+    /// and when a send to it fails — a session whose browser has gone will never be
+    /// finalled, so nothing else would ever release its gate.
+    /// </summary>
+    public void DropBrowser(BrowserConnection browser)
+    {
+        List<ushort> held = [];
+        lock (browserLock)
+        {
+            browsers.Remove(browser);
+
+            var keys = browserMap.Keys
+                .Where(key => ReferenceEquals(key.Browser, browser))
+                .ToArray();
+
+            foreach (var key in keys)
+            {
+                var session = browserMap[key];
+                browserMap.Remove(key);
+                browserSessions.Remove(session);
+                held.Add(session);
+            }
+        }
+
+        // Outside the lock: ReleaseGate takes gateLock, and the two are never
+        // ordered the other way anywhere else.
+        foreach (var session in held)
+            ReleaseGate(session);
+    }
+
+    private void ForgetBrowserSession(
+        ushort session, (BrowserConnection Browser, ushort BrowserSession) owner)
+    {
+        lock (browserLock)
+        {
+            browserSessions.Remove(session);
+            browserMap.Remove((owner.Browser, owner.BrowserSession));
+        }
+
+        ReleaseGate(session);
+    }
+
+    /// <summary>
+    /// Next free id in the browser half of the space, wrapping. Called under
+    /// browserLock.
+    /// </summary>
+    private ushort AllocateBrowserSession()
+    {
+        for (var attempt = 0; attempt < SessionChunk.BrowserIdLimit - SessionChunk.BrowserIdBase; attempt++)
+        {
+            var session = nextBrowserId;
+            nextBrowserId = (ushort)(session + 1 >= SessionChunk.BrowserIdLimit
+                ? SessionChunk.BrowserIdBase
+                : session + 1);
+
+            if (!browserSessions.ContainsKey(session))
+                return session;
+        }
+
+        throw new RelayException("no free browser session ids");
     }
 
     // ── the one command the relay issues ──────────────────────────────────────
@@ -420,6 +601,20 @@ internal sealed class DeviceConnection
         foreach (var channel in waiting)
             channel.Writer.TryWrite(new Chunk(
                 SessionChunk.FlagReject, Encoding.UTF8.GetBytes("device disconnected")));
+
+        BrowserConnection[] attached;
+        lock (browserLock)
+        {
+            attached = [.. browsers];
+            browsers.Clear();
+            browserSessions.Clear();
+            browserMap.Clear();
+        }
+
+        // A browser attached to a pipe that has gone has nothing left to talk to,
+        // and its own socket is the only way it finds that out.
+        foreach (var browser in attached)
+            browser.Abort();
 
         int holder;
         lock (gateLock)
