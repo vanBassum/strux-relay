@@ -37,9 +37,15 @@ await RelayDatabase.MigrateAsync(app.Services, app.Logger);
 // The device pipe is a raw socket, not a hub, so the upgrade is handled here.
 app.UseWebSockets(new WebSocketOptions
 {
-    // The device is on WiFi and may go quiet for a long time between commands.
-    // A ping is how a pipe whose device fell off the network gets noticed at all,
-    // since a dead TCP connection is otherwise indistinguishable from an idle one.
+    // Note what this does NOT buy: the firmware discards every non-binary frame
+    // (RelaySocket::ReadFrame), so it never pongs a server ping and a missing
+    // pong says nothing — which is why no KeepAliveTimeout is set here, as one
+    // would tear down healthy pipes. What it does buy is the send itself
+    // failing, which surfaces a dead TCP connection on this side.
+    //
+    // Liveness in the other direction is the device's job and it already does
+    // it: RelayManager pings every 30 s and drops the pipe when one will not go
+    // out. So an open pipe here means the device was alive within 30 s.
     KeepAliveInterval = TimeSpan.FromSeconds(30),
 });
 

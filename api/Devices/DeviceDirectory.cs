@@ -32,14 +32,15 @@ internal sealed class DeviceDirectory(PairingStore pairing, DeviceRegistry regis
                 device.Firmware,
                 live is not null && live.Online ? Connection.Online : Connection.Offline,
                 Approval.Approved,
-                // The live pipe is more recent than the row: last-seen is written
-                // at connect, so a device that has been up for an hour would
-                // otherwise read as last seen an hour ago.
-                live is not null ? DateTime.UtcNow : device.LastSeen,
+                // The last time the device actually said something, which for a
+                // live pipe the database does not know: its last-seen column is
+                // written at connect and never again. NOT DateTime.UtcNow, which
+                // is what this used to be — that is a fact about when the list
+                // was built, dressed up as a fact about the device.
+                live is not null ? live.LastMessageAt : device.LastSeen,
                 live?.Address,
-                live is not null
-                    ? (int)(DateTime.UtcNow - live.ConnectedAt).TotalSeconds
-                    : null,
+                live?.ConnectedAt,
+                live?.LastMessageAt,
                 device.ApprovedAt,
                 Token: null,
                 Attempts: null));
@@ -58,7 +59,8 @@ internal sealed class DeviceDirectory(PairingStore pairing, DeviceRegistry regis
                 Approval.Pending,
                 device.LastSeen,
                 Address: null,
-                UptimeSeconds: null,
+                ConnectedAt: null,
+                LastMessageAt: null,
                 ApprovedAt: null,
                 device.Token,
                 device.Attempts));

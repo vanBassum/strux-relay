@@ -13,9 +13,12 @@ export type Device = {
   firmware: string
   connection: Connection
   approval: Approval
+  /** The last time the device actually said something, not when this was fetched. */
   lastSeen: string | null
   address: string | null
-  uptimeSeconds: number | null
+  /** Live pipes only: when it came up, and when it last spoke. */
+  connectedAt: string | null
+  lastMessageAt: string | null
   approvedAt: string | null
   /** Only on a pending device: approving is keyed on the (id, token) pair. */
   token: string | null

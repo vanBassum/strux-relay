@@ -101,6 +101,16 @@ internal sealed class DeviceConnection
 
     public DateTime ConnectedAt { get; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// When the device last said anything at all — a log line, a reply, a
+    /// telemetry point. Distinct from <see cref="ConnectedAt"/> on purpose: a
+    /// device can hold an open pipe for hours, so "how long has it been up" and
+    /// "when did we last hear from it" are different questions and neither
+    /// answers the other. Seeded with the connect, because the connect itself is
+    /// the first thing we heard.
+    /// </summary>
+    public DateTime LastMessageAt { get; private set; } = DateTime.UtcNow;
+
     public bool Online => socket.State == WebSocketState.Open;
 
     private readonly record struct Chunk(byte Flags, byte[] Payload);
@@ -158,6 +168,11 @@ internal sealed class DeviceConnection
 
         var (session, flags) = SessionChunk.ReadHeader(chunk.Span);
         var payload = chunk[SessionChunk.HeaderSize..];
+
+        // Before the branches: a log broadcast and a telemetry point are not
+        // replies to anything, but they are still the device speaking, which is
+        // the whole question this answers.
+        LastMessageAt = DateTime.UtcNow;
 
         if (session == SessionChunk.BroadcastSession)
         {

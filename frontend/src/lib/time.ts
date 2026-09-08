@@ -27,3 +27,25 @@ export function ago(iso: string | null): string {
 export function absolute(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString() : "never"
 }
+
+/**
+ * "4m", "3h 12m", "2d" — how long something has been the case, as opposed to how
+ * long ago it happened. Used for an open pipe's age, where "connected 4 minutes
+ * ago" would read as though the connection were an event in the past rather than
+ * a state still running.
+ */
+export function duration(iso: string | null): string {
+  if (!iso) return "—"
+
+  const minutes = Math.max(0, (Date.now() - Date.parse(iso)) / 60_000)
+  if (minutes < 1) return "<1m"
+  if (minutes < 60) return `${Math.floor(minutes)}m`
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) {
+    const rest = Math.floor(minutes % 60)
+    return rest ? `${hours}h ${rest}m` : `${hours}h`
+  }
+
+  return `${Math.floor(hours / 24)}d`
+}

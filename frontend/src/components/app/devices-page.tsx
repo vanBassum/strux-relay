@@ -23,6 +23,7 @@ import {
 import { ChoiceFilter } from "@/components/app/device-filters"
 import { DeviceUrl } from "@/components/app/device-url"
 import { useDevices, type Device } from "@/hooks/use-devices"
+import { useNow } from "@/hooks/use-now"
 import {
   APPROVAL_OPTIONS,
   CONNECTION_OPTIONS,
@@ -35,7 +36,7 @@ import {
   type Sort,
   type SortKey,
 } from "@/lib/device-table"
-import { absolute, ago } from "@/lib/time"
+import { absolute, ago, duration } from "@/lib/time"
 
 const COLUMNS: { key: SortKey; label: string }[] = [
   { key: "name", label: "Name" },
@@ -81,6 +82,9 @@ function SortableHead({
 
 export function DevicesPage() {
   const { devices, loading, approve, forget } = useDevices()
+
+  // Relative times are rendered, not stored, so something has to re-render them.
+  useNow()
 
   const [filters, setFilters] = useState<Filters>(NO_FILTERS)
   const [sort, setSort] = useState<Sort | null>(null)
@@ -274,6 +278,17 @@ function DeviceRow({
           />
           {online ? "Online" : "Offline"}
         </span>
+        {/* How long the pipe has been up, which is a different question from
+            when the device last spoke — a board can hold one open for hours
+            while saying nothing. */}
+        {online && (
+          <div
+            className="text-muted-foreground text-xs"
+            title={`Connected since ${absolute(device.connectedAt)}`}
+          >
+            for {duration(device.connectedAt)}
+          </div>
+        )}
       </TableCell>
       <TableCell>
         {device.approval === "pending" ? (
@@ -287,8 +302,21 @@ function DeviceRow({
           <Badge variant="secondary">Approved</Badge>
         )}
       </TableCell>
-      <TableCell title={absolute(device.lastSeen)}>
-        {ago(device.lastSeen)}
+      {/* "now" for a connected device, and that is a claim the transport
+          actually supports: the firmware pings every 30 s and tears the pipe
+          down when one fails, so an open pipe means it was alive within 30 s.
+          Showing the last MESSAGE here instead read "6 minutes ago" beside a
+          green Online dot — true, since an idle board says nothing for minutes,
+          and alarming for no reason. The quiet-since detail moves to the title,
+          where it informs rather than worries. */}
+      <TableCell
+        title={
+          online
+            ? `Last message ${ago(device.lastMessageAt)} · connected since ${absolute(device.connectedAt)}`
+            : absolute(device.lastSeen)
+        }
+      >
+        {online ? "now" : ago(device.lastSeen)}
       </TableCell>
       <TableCell className="font-mono text-xs">
         {device.address ?? "—"}

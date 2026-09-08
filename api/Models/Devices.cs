@@ -50,7 +50,8 @@ internal sealed record DeviceView(
     Approval Approval,
     DateTime? LastSeen,
     string? Address,
-    int? UptimeSeconds,
+    DateTime? ConnectedAt,
+    DateTime? LastMessageAt,
     DateTime? ApprovedAt,
     string? Token,
     int? Attempts);
