@@ -41,8 +41,15 @@ import { type DeviceNavItem } from "@/lib/device-nav"
 /// What the relay's GetDeviceUi answers. Status is the relay's classification — only
 /// it can tell a device that REFUSED the command from one that went silent — and the
 /// manifest is the device's own reply text, unparsed on the way through.
+///
+/// The status values are lower-case because the SERVER spells them that way on purpose
+/// (see DeviceUiView.Of). They were written here as "Absent"/"Offline" first, matching
+/// the C# enum's own casing, and the serializer camel-cased them: every device that
+/// refused `ui modules` then fell through to the error branch and was told it had
+/// failed to answer. Which is most of a real fleet. Nothing threw, and the one device
+/// that did have modules worked, so it survived a full round of testing.
 type DeviceUiView = {
-  status: "Ready" | "Offline" | "Absent" | "Error"
+  status: "ready" | "offline" | "absent" | "error"
   manifest: string | null
   detail: string | null
 }
@@ -101,18 +108,18 @@ export function useDeviceModules(device: Device | null): {
         if (cancelled) return
         const target = forDevice(deviceId)
 
-        if (view.status === "Absent") {
+        if (view.status === "absent") {
           target.setStatus(
             "absent",
             "This firmware declares no UI modules, so the relay has nothing to compose.",
           )
           return
         }
-        if (view.status === "Offline") {
+        if (view.status === "offline") {
           target.setStatus("offline", view.detail ?? "device is not connected")
           return
         }
-        if (view.status === "Error" || !view.manifest) {
+        if (view.status === "error" || !view.manifest) {
           target.setStatus("error", view.detail ?? "the device did not answer")
           return
         }

@@ -183,25 +183,25 @@ internal sealed class RelayHub(
     {
         var device = registry.Find(deviceId);
         if (device is null || !device.Online)
-            return new DeviceUiView(UiManifestStatus.Offline, Detail: "device is not connected");
+            return DeviceUiView.Of(UiManifestStatus.Offline, detail: "device is not connected");
 
         try
         {
             var reply = await device.CommandAsync(
                 "ui modules", null, Context.ConnectionAborted);
-            return new DeviceUiView(UiManifestStatus.Ready, reply);
+            return DeviceUiView.Of(UiManifestStatus.Ready, reply);
         }
         catch (RelayException exception) when (exception.Refused)
         {
             // Old firmware, or firmware that simply registers no UI. Not logged:
             // this is the ordinary answer for most of a mixed fleet.
-            return new DeviceUiView(UiManifestStatus.Absent, Detail: exception.Message);
+            return DeviceUiView.Of(UiManifestStatus.Absent, detail: exception.Message);
         }
         catch (Exception exception)
         {
             logger.LogInformation(
                 "ui: {DeviceId} manifest read failed: {Message}", deviceId, exception.Message);
-            return new DeviceUiView(UiManifestStatus.Error, Detail: exception.Message);
+            return DeviceUiView.Of(UiManifestStatus.Error, detail: exception.Message);
         }
     }
 

@@ -39,9 +39,41 @@ internal enum UiManifestStatus
 /// bytes that carry their own version in their name, which a command reply does not.
 /// </summary>
 internal sealed record DeviceUiView(
-    UiManifestStatus Status,
+    string Status,
     string? Manifest = null,
-    string? Detail = null);
+    string? Detail = null)
+{
+    /// <summary>
+    /// Builds one, spelling the wire value out rather than leaving it to the JSON
+    /// serializer's enum naming policy.
+    ///
+    /// That policy bit once and the failure was quiet in the worst way. The status
+    /// went out as <c>"absent"</c> while the shell compared against <c>"Absent"</c>,
+    /// so a device that refused <c>ui modules</c> fell through to the error branch and
+    /// was reported as a device that had failed to answer. Which is most of a real
+    /// fleet, told it was broken. Nothing failed, nothing logged, and the one device
+    /// that DID have modules worked — so the bug lived exactly where nobody looks.
+    ///
+    /// A wire value that both ends compare against is part of the contract, so it is
+    /// written here in one place instead of being a consequence of a framework default
+    /// that a configuration change could move.
+    /// </summary>
+    public static DeviceUiView Of(
+        UiManifestStatus status, string? manifest = null, string? detail = null) =>
+        new(Wire(status), manifest, detail);
+
+    private static string Wire(UiManifestStatus status) => status switch
+    {
+        UiManifestStatus.Ready => "ready",
+        UiManifestStatus.Offline => "offline",
+        UiManifestStatus.Absent => "absent",
+        UiManifestStatus.Error => "error",
+        // Unreachable while the enum and this switch agree, and it must stay a real
+        // status rather than throwing: a shell that cannot parse this reports a broken
+        // device, which is the failure above all over again.
+        _ => "error",
+    };
+}
 
 /// <summary>
 /// What one command on a device came back with.
