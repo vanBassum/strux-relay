@@ -6,12 +6,21 @@ import {
   ChevronUpIcon,
   ChevronsUpDownIcon,
   CpuIcon,
+  EllipsisIcon,
   ExternalLinkIcon,
   SearchIcon,
+  Trash2Icon,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import {
   Table,
@@ -296,7 +305,9 @@ function DeviceRow({
       // for anyone not using a mouse.
       role={openable ? "button" : undefined}
       tabIndex={openable ? 0 : undefined}
-      aria-label={openable ? `Open ${device.name || device.deviceId}` : undefined}
+      aria-label={
+        openable ? `Select ${device.name || device.deviceId}` : undefined
+      }
       onClick={openable ? open : undefined}
       onKeyDown={
         openable
@@ -309,7 +320,9 @@ function DeviceRow({
           : undefined
       }
     >
-      <TableCell>
+      <TableCell
+        className={selected ? "shadow-[inset_2px_0_0_var(--primary)]" : undefined}
+      >
         <div className="font-medium">{device.name || device.deviceId}</div>
         <div className="text-muted-foreground font-mono text-xs">
           {device.deviceId}
@@ -375,41 +388,81 @@ function DeviceRow({
           className="flex justify-end gap-1"
           onClick={(event) => event.stopPropagation()}
         >
-          {/* Straight to the device's own site, which is what the dashboard
-              this replaced did with the device's name. Only while it is online:
-              the page is fetched over the pipe, so without one there is nothing
-              to serve and a dead link is worse than no link. */}
-          {online && device.approval === "approved" && (
-            <Button
-              size="sm"
-              variant="outline"
-              // See device-page.tsx: an anchor, not a button.
-              nativeButton={false}
-              render={
-                <a
-                  href={deviceUiUrl(device.deviceId)}
-                  target="_blank"
-                  rel="noreferrer"
-                  title="Open this device's own web UI"
-                />
-              }
-            >
-              <ExternalLinkIcon />
-              Open UI
-            </Button>
-          )}
+          {/* Approve stays a button, and only this one does. It is the whole
+              point of a pending row — the operator is here to make that
+              decision — so burying it behind a menu would hide the primary
+              action to tidy away the secondary ones. */}
           {device.approval === "pending" && (
             <Button size="sm" onClick={() => void onApprove(device)}>
               Approve
             </Button>
           )}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void onForget(device)}
-          >
-            {device.approval === "pending" ? "Reject" : "Forget"}
-          </Button>
+
+          {/* Everything else is secondary and lives behind the kebab.
+              "Open UI" used to be a button right here, and it was clicked by
+              accident repeatedly: it sat where the eye lands after reading the
+              row, it looked exactly as available as Approve, and the same
+              action was also in the sidebar. Leaving the device's site one
+              deliberate step away is the fix; the row's own click still just
+              selects. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={`Actions for ${device.name || device.deviceId}`}
+                >
+                  <EllipsisIcon />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end" className="w-48">
+              {/* Disabled rather than absent when there is nothing to open, so
+                  the menu keeps one shape and says why instead of quietly
+                  offering less. A pending device has no pipe and no pages; an
+                  offline one has no pipe to fetch its page over, and a dead
+                  link is worse than a greyed-out one. */}
+              {online && device.approval === "approved" ? (
+                <DropdownMenuItem
+                  render={
+                    <a
+                      href={deviceUiUrl(device.deviceId)}
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  }
+                >
+                  <ExternalLinkIcon />
+                  Open device UI
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem
+                  disabled
+                  title={
+                    device.approval === "pending"
+                      ? "Approve this device first"
+                      : "Offline — no pipe to load its page over"
+                  }
+                >
+                  <ExternalLinkIcon />
+                  Open device UI
+                </DropdownMenuItem>
+              )}
+
+              <DropdownMenuSeparator />
+
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() => void onForget(device)}
+              >
+                <Trash2Icon />
+                {device.approval === "pending"
+                  ? "Reject device"
+                  : "Forget device"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </TableCell>
     </TableRow>
