@@ -17,8 +17,15 @@ ASP.NET Core on .NET 10, with a React + shadcn/ui dashboard. It replaced a
 ## Run it
 
 ```bash
-cd api && dotnet run                 # http://localhost:8080, dashboard included
+cd api && dotnet run                 # http://0.0.0.0:8080, dashboard included
 ```
+
+It binds **every** interface, not just loopback, because a device dials in from the
+LAN — `applicationUrl: http://localhost:8080` leaves nothing listening on the address
+`relay.url` points at, and the device's SYN then has no socket to land on. On Windows
+that reads as a *timeout* rather than a refusal (the firewall drops inbound packets to
+a port with no listening socket instead of answering RST), so it looks exactly like the
+firewall problem below even when the rule is already in place.
 
 For UI work, run the dev server too and use that instead — it proxies `/hub` and
 `/device*` through to Kestrel:
