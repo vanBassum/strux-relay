@@ -96,7 +96,7 @@ and rewrite the 3-byte session header, because it must own the session-id space:
 * Session 0 is the device's log broadcast, so the pipe is **not**
   request/response: session-0 chunks belong to every attached browser rather than
   to whoever asked. Session 0xFFFF is telemetry, consumed rather than forwarded.
-  Neither has anywhere to go yet — see *Not ported yet*.
+  Session-0 chunks go to every attached browser pipe; telemetry goes to the sink.
 * One request is in flight per device, held for a whole session. The device
   dispatches a chunk synchronously with no slot table, so overlapping sessions
   would let a file fetch's chunk land inside a streamed request body. A watchdog
@@ -191,11 +191,45 @@ large bundle and it is the bundle that decides whether this fits in a container.
 Eviction is least-recently-used. The Cache page shows the real policy, per-device
 size/files/last-warmed/last-used, and Warm and Clear per device or for everything.
 
-## Not ported yet
+## Device UI modules
 
-* **The browser pipe** (`/devices/<id>/ws`), so a device's UI can be *served*
-  through the relay but cannot yet talk back to its device over the pipe. Session
-  0 log broadcasts have nowhere to go until this lands.
+A device's firmware declares its own UI and ships the bundle that draws it, so this
+relay composes a device page without knowing anything about that device at build
+time. Two pieces on the server:
+
+* **`GetDeviceUi`** reads the device's manifest (the `ui modules` command). A
+  dedicated hub method rather than a generic command call, because the
+  classification is the interesting part and only the relay can make it: a device
+  that *refused* the command ships no modules — the mixed-fleet case, and the common
+  one — while silence is a fault. Through a generic call both arrive as "it threw".
+* **`DeviceCommand`** is how a module talks to its device, over the pipe the device
+  already dialled and through the same gate as a file read. Not a second transport:
+  a browser speaking the pipe itself would need a socket per device with its own
+  reconnect and lifecycle, reimplementing `DeviceConnection` in a browser.
+
+Failure comes back as a **result, not an exception**. SignalR does not deliver a
+HubException's message intact — it wraps it in "An unexpected error occurred
+invoking 'X' on the server." — and a module is promised the device's own words.
+
+The cache warmer asks `ui modules` and warms the bundles it names, because a bundle
+is named by firmware in a command reply and no regex over `index.html` can find it.
+
+The shell contract is vendored from Strux byte-identical with a lock file, and
+`pnpm build` fails if the copy was edited or the lock does not describe it. Upstream
+being ahead is a warning: this shell may deliberately speak an older `hostApi` and
+tells a device so through the manifest's range.
+
+## Not built yet
+
+* **Console, Settings and Firmware for a device.** The relay shell gives a device an
+  *Overview* — its contributed cards — and nothing else, while the device's own shell
+  has had all three for a long time. They are **not** modules and must not become
+  modules: they are framework features every Strux device has, and `settings list`
+  already describes itself. Settings needs nothing new here; a live Console needs a
+  per-device hub group, because session-0 broadcasts reach browser pipes and not hub
+  clients; Firmware needs a streaming sibling to `CommandAsync`, because an upload is
+  a session and not one envelope plus one reply. Until then *Open device UI* serves
+  the device's own page over the same pipe, so nothing is unreachable.
 
 Also missing, and never present: TLS (the proxy's job), and any way to block a
 device for good — rejecting only forgets it, and a refused device keeps retrying.
