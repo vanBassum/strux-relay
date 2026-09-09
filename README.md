@@ -219,40 +219,46 @@ The shell contract is vendored from Strux byte-identical with a lock file, and
 being ahead is a warning: this shell may deliberately speak an older `hostApi` and
 tells a device so through the manifest's range.
 
-## A device's own pages
+## Every device page is the firmware's
 
-Beside its *Overview* — the cards its firmware contributes — every device gets
-Console, Settings and Firmware from this shell. They are **not** modules and will not
-become modules: they are framework features every Strux device has, and each one
-already describes itself, so the page is generated from a declaration rather than
-drawn by code only the firmware could supply. A module would also put the framework's
-own UI in every product's firmware, where a fork could ship without it.
+This shell contributes **nothing** to a device's navigation. Its own nav is Devices,
+Telemetry and Cache; everything under a device is exactly what that device's manifest
+declares, in the order it declares it, and the first entry is where you land. So the
+firmware chooses what its UI is *and* which part of it is the front page.
 
-* **Settings** — `settings list` / `set` / `save`. Narrower than the device's own
-  version on purpose: no raw JSON editor and no Wi-Fi picker, since neither is needed
-  to change a value from across the internet. Secret-looking keys are masked, which is
-  a mitigation and not a fix — the device sends them in the clear.
-* **Console** — `log list`, **polled**. Session-0 broadcasts fan out to browser pipes,
-  not to hub clients, so a live tail needs a per-device hub group; what this gives
-  instead is the whole ring buffer, which reaches back before the page was opened.
-* **Firmware** — `partition status` / `list`, and an upload. The upload is the one
-  thing `CommandAsync` cannot express: writing an image is a *session*, not one
-  envelope and one reply, so `DeviceConnection.PartitionUploadAsync` sends a non-FINAL
-  envelope, streams the body 4 KB at a time, and reads one reply at end-of-stream. It
-  erases, writes, then activates — and activates only once every byte landed, so a
-  failed upload leaves the old slot booting.
+Console, Settings and Firmware were briefly pages here. That was wrong for a reason
+worth keeping: writing them meant teaching this relay `settings list`, `log list` and
+`partition status` **by name**, which is precisely the coupling the module system
+exists to remove — and it meant two implementations of each page, one per shell. They
+are firmware modules now, and this relay knows the name of no device command at all.
 
-  It arrives over `POST /devices/{id}/partition/{label}`, HTTP rather than the hub
-  because an upload is a request body: the hub's JSON protocol would carry the image
-  as base64, a third larger and buffered as strings, where `Request.Body` is a stream
-  that can be handed to the pipe as it arrives. Which partitions may be written is the
-  DEVICE's answer — `partition list` reports `uploadable` — rather than a rule
-  reproduced in the browser.
+Cards went the same way. Nothing hosted them once no shell owned a page under a device.
+
+### What a module can ask for
+
+`transport.request` is one envelope and one reply, and three of the four modules needed
+more than that. The contract (v2) adds:
+
+* **`upload`** — `POST /devices/{id}/upload?command=…`, and **`download`** —
+  `GET /devices/{id}/download?command=…`. HTTP rather than the hub because these are
+  *bodies*: through the hub's JSON protocol a 1.2 MB image travels as base64, a third
+  larger and buffered as strings, where `Request.Body` is a stream the relay hands to
+  the pipe 4 KB at a time. Both are generic — `command` is the route the device
+  dispatches on, every other query parameter is an argument — so the relay names no
+  command and knows nothing about partitions. The erase/write/activate sequence lives
+  in the firmware module, which is the only side that knows what a partition is.
+* **`logs`** — the device's session-0 broadcast. It fans out to browser pipes, and a
+  hub client is not one, so `DeviceConnection` also pushes each line to a per-device
+  hub group (`SubscribeDeviceLogs`). Per device, because a dashboard with twenty
+  boards has no use for nineteen other logs. Nothing is replayed: a module that wants
+  what came before it subscribed asks the device for `log list`.
+
+`hostApi` is 2 as a result. A device whose modules need `upload` cannot run on a shell
+that speaks 1, and such a shell says "needs a newer shell" and stays usable otherwise —
+which is what the range is for.
 
 ## Not built yet
 
-* **A live Console.** See above: it needs the relay to push session-0 chunks to a
-  per-device hub group.
 * **Device-side flash progress.** The browser sees its own upload progress, which
   tracks closely because the relay forwards chunk by chunk, but the device's own write
   position is not surfaced — that would need a hub group per upload.
