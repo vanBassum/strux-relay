@@ -1,84 +1,101 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import { AppSidebar } from "@/components/app/app-sidebar"
 import { AppTopbar } from "@/components/app/app-topbar"
 import { DevicePage } from "@/components/app/device-page"
 import { DevicesPage } from "@/components/app/devices-page"
-import {
-  RELAY_HOME,
-  RELAY_PAGES,
-  type RelayPage,
-  type View,
-} from "@/components/app/navigation"
+import { RELAY_PAGES } from "@/components/app/navigation"
 import { CachePage } from "@/components/app/cache-page"
 import { TelemetryPage } from "@/components/app/telemetry-page"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { useTheme } from "@/components/theme-provider"
-import { useDeviceNavigation } from "@/hooks/use-device-navigation"
+import { HOME, useHashRoute } from "@/hooks/use-hash-route"
 import { useDevices } from "@/hooks/use-devices"
 import { RelayProvider, useRelay, useRelayContext } from "@/hooks/use-relay"
-import { DEFAULT_DEVICE_PAGE } from "@/lib/device-nav"
+import { useDeviceModules } from "@/shell/module-host"
 
 /** Split from App so everything below it can reach the hub through the context. */
 function Workspace() {
   const { state, session, reconnect } = useRelayContext()
+  const { route, navigate, replace } = useHashRoute()
   // Held here rather than in the page: the sidebar needs the selected device too,
   // and a second useDevices would mean a second copy of the same list.
   const devices = useDevices()
 
-  // Two pieces of state, not one. Which device is in scope survives going back
-  // to the list — the DEVICE section stays in the sidebar and pressing another
-  // row is what moves it — so it cannot live inside the view.
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [view, setView] = useState<View>(RELAY_HOME)
+  // Which device is in scope, and it deliberately OUTLIVES the route. Going back to
+  // the list is not deselecting — the DEVICE section stays in the sidebar so its
+  // pages are one click away, and opening another row is what moves it. So the route
+  // seeds this and never clears it.
+  const [selectedId, setSelectedId] = useState<string | null>(
+    route.kind === "device" ? route.deviceId : null,
+  )
 
-  // Resolved from the live list every render, not stored alongside the id. The
-  // list changes underneath us — the relay pushes when a device connects or is
-  // forgotten — so a device forgotten while selected simply stops resolving and
-  // the DEVICE section goes with it, no cleanup required.
+  useEffect(() => {
+    if (route.kind === "device") setSelectedId(route.deviceId)
+  }, [route])
+
+  // Resolved from the live list every render, not stored alongside the id. The list
+  // changes underneath us — the relay pushes when a device connects or is forgotten —
+  // so a device forgotten while selected simply stops resolving and the DEVICE
+  // section goes with it, no cleanup required.
   const selected =
     devices.devices.find((device) => device.deviceId === selectedId) ?? null
 
-  const deviceNav = useDeviceNavigation(selected)
+  // The manifest read. Per device, and re-read rather than remembered when a device
+  // reconnects: it may have been reflashed while it was away.
+  const modules = useDeviceModules(selected)
 
-  // The stored page may not be one this device offers — it will not be, the day
-  // these come from a manifest and two devices offer different pages — so it is
-  // validated against the navigation rather than trusted.
-  const requested = view.kind === "device" ? view.page : null
+  // The requested page may not be one this device offers — with nav coming from a
+  // manifest that is the normal case, not an edge one, because two devices offer
+  // different pages and a bookmark outlives a reflash. So it is validated against the
+  // manifest rather than trusted.
+  const requested = route.kind === "device" ? route.page : null
   const devicePage = selected
-    ? (deviceNav.find((item) => item.id === requested)?.id ??
-      (deviceNav[0]?.id ?? null))
+    ? (modules.nav.find((item) => item.id === requested)?.id ?? modules.nav[0]?.id ?? null)
     : null
-  const activeItem = deviceNav.find((item) => item.id === devicePage) ?? null
+  const activeItem = modules.nav.find((item) => item.id === devicePage) ?? null
 
-  const openDevice = (deviceId: string) => {
-    setSelectedId(deviceId)
-    setView({ kind: "device", page: DEFAULT_DEVICE_PAGE })
-  }
+  // Canonicalise the URL once the manifest has answered, so `#/devices/x` becomes
+  // `#/devices/x/<first page>` and a stale page id is corrected. `replace`, not
+  // `navigate`: the user did not ask for this step, and it would otherwise sit in the
+  // back stack redirecting forward again.
+  useEffect(() => {
+    if (route.kind !== "device" || !devicePage || route.page === devicePage) return
+    replace({ kind: "device", deviceId: route.deviceId, page: devicePage })
+  }, [route, devicePage, replace])
 
-  const onDevice = view.kind === "device" && selected !== null && activeItem !== null
+  // A device route whose device the relay has never heard of. Only once the list has
+  // actually loaded — before that, "not found" just means "not yet".
+  useEffect(() => {
+    if (route.kind !== "device" || devices.loading) return
+    if (devices.devices.some((device) => device.deviceId === route.deviceId)) return
+    navigate(HOME)
+  }, [route, devices.loading, devices.devices, navigate])
 
-  // Devices is where a device view lands when its device stops resolving, so the
-  // shell never shows nothing.
-  const relayPage: RelayPage = view.kind === "relay" ? view.page : "devices"
+  const onDevice = route.kind === "device" && selected !== null
+  const relayPage = route.kind === "relay" ? route.page : "devices"
 
   return (
     <>
       <AppSidebar
         session={session}
         relayPage={onDevice ? null : relayPage}
-        onRelayPage={(page) => setView({ kind: "relay", page })}
+        onRelayPage={(page) => navigate({ kind: "relay", page })}
         device={selected}
-        deviceNav={deviceNav}
-        // Nothing is the active page while the list is showing, even though a
-        // device is still selected: the highlight says where you are.
+        deviceNav={modules.nav}
+        navStatus={modules.status}
+        navDetail={modules.detail}
+        // Nothing is the active page while the list is showing, even though a device
+        // is still selected: the highlight says where you are.
         devicePage={onDevice ? devicePage : null}
-        onDevicePage={(page) => setView({ kind: "device", page })}
+        onDevicePage={(page) =>
+          selected && navigate({ kind: "device", deviceId: selected.deviceId, page })
+        }
       />
-      {/* min-h-0 so the page gives up room to the bar pinned above it, rather
-          than growing and pushing it off the top of the window. */}
+      {/* min-h-0 so the page gives up room to the bar pinned above it, rather than
+          growing and pushing it off the top of the window. */}
       <SidebarInset className="min-h-0">
         <AppTopbar
           state={state}
@@ -86,9 +103,9 @@ function Workspace() {
           trail={
             onDevice
               ? [
-                  { label: "Devices", onClick: () => setView(RELAY_HOME) },
+                  { label: "Devices", onClick: () => navigate(HOME) },
                   { label: selected.name || selected.deviceId },
-                  { label: activeItem.label },
+                  ...(activeItem ? [{ label: activeItem.label }] : []),
                 ]
               : [
                   {
@@ -101,7 +118,12 @@ function Workspace() {
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {onDevice ? (
-            <DevicePage device={selected} item={activeItem} />
+            <DevicePage
+              device={selected}
+              pageId={devicePage}
+              status={modules.status}
+              detail={modules.detail}
+            />
           ) : relayPage === "telemetry" ? (
             <TelemetryPage />
           ) : relayPage === "cache" ? (
@@ -110,7 +132,7 @@ function Workspace() {
             <DevicesPage
               devices={devices}
               selectedId={selectedId}
-              onOpen={openDevice}
+              onOpen={(deviceId) => navigate({ kind: "device", deviceId, page: null })}
             />
           )}
         </div>
@@ -121,8 +143,8 @@ function Workspace() {
 
 export function App() {
   const relay = useRelay()
-  // sonner's wrapper reads next-themes, which this app does not use, so without
-  // being told the theme its toasts follow the OS and ignore the toggle.
+  // sonner's wrapper reads next-themes, which this app does not use, so without being
+  // told the theme its toasts follow the OS and ignore the toggle.
   const { resolvedTheme } = useTheme()
 
   return (

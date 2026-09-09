@@ -21,18 +21,9 @@ export const RELAY_PAGES: { id: RelayPage; label: string; icon: LucideIcon }[] =
   { id: "cache", label: "Cache", icon: DatabaseIcon },
 ]
 
-/**
- * What the main area is showing. Note what is NOT in here: which device is
- * selected.
- *
- * Selection outlives the view on purpose. Going back to the list is not
- * deselecting — the device stays in the sidebar so its pages are one click away,
- * and pressing another row is what changes it. Folding the id into the view
- * would have made "show the list" and "forget which device I was on" the same
- * action, which is why they were the same action before.
- */
-export type View =
-  | { kind: "relay"; page: RelayPage }
-  | { kind: "device"; page: string }
-
-export const RELAY_HOME: View = { kind: "relay", page: "devices" }
+// Note what is NOT here any more: a `View` union, and a device page's default id.
+// Where the dashboard is now lives in the URL — see hooks/use-hash-route.ts — because
+// a device page became a real destination the moment its nav came from a manifest: it
+// has to survive a refresh, be linkable, and answer the back button. And there is no
+// default device page to name, because this build no longer knows what pages a device
+// has; the first one the manifest declares is the one that opens.

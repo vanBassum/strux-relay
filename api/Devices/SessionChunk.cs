@@ -64,5 +64,18 @@ internal static class SessionChunk
     public static bool IsTerminal(byte flags) => (flags & (FlagFinal | FlagReject)) != 0;
 }
 
-/// <summary>The device answered, but not usefully: a reject, malformed, or gone.</summary>
-internal sealed class RelayException(string message) : Exception(message);
+/// <summary>
+/// The device answered, but not usefully: a reject, malformed, or gone.
+///
+/// <see cref="Refused"/> tells the two apart, and the difference is load-bearing
+/// above this layer: a REFUSAL is the device declining on purpose — an unknown
+/// command, a handler's own error — and for something like <c>ui modules</c> that
+/// means "this firmware ships no modules", which is an ordinary answer. Anything
+/// else is a fault worth showing. Only the flags on the wire can say which, so it
+/// is recorded where the flags are read rather than guessed from the message text
+/// later.
+/// </summary>
+internal sealed class RelayException(string message, bool refused = false) : Exception(message)
+{
+    public bool Refused { get; } = refused;
+}

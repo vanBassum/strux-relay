@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using Microsoft.AspNetCore.SignalR;
 using StruxRelay.Cache;
 using StruxRelay.Data;
@@ -31,7 +32,8 @@ internal sealed class RelayHub(
     FrontendCache cache,
     CacheDirectory cacheDirectory,
     CacheWarmer warmer,
-    IHubContext<RelayHub> hub) : Hub
+    IHubContext<RelayHub> hub,
+    ILogger<RelayHub> logger) : Hub
 {
     /// <summary>
     /// Who is currently watching the live telemetry feed. A group rather than
@@ -160,6 +162,92 @@ internal sealed class RelayHub(
         var dropped = cache.Clear();
         await AnnounceCacheAsync();
         return new CacheActionResult(true, null, dropped);
+    }
+
+    // ── device UI modules ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// One device's UI manifest — what pages and cards its firmware declares, and
+    /// which bundles draw them.
+    ///
+    /// A dedicated method rather than <see cref="DeviceCommand"/> with
+    /// <c>"ui modules"</c>, because the interesting part is the classification and
+    /// only the relay can make it: a REFUSAL means this firmware ships no modules
+    /// (the mixed-fleet case, and the common one), while silence or a malformed
+    /// reply is a fault. Through a generic command call both arrive as "it threw",
+    /// and the shell would have to guess from message text which kind of nothing it
+    /// got. The hostApi range check stays in the shell, because only the shell knows
+    /// what version it is.
+    /// </summary>
+    public async Task<DeviceUiView> GetDeviceUi(string deviceId)
+    {
+        var device = registry.Find(deviceId);
+        if (device is null || !device.Online)
+            return new DeviceUiView(UiManifestStatus.Offline, Detail: "device is not connected");
+
+        try
+        {
+            var reply = await device.CommandAsync(
+                "ui modules", null, Context.ConnectionAborted);
+            return new DeviceUiView(UiManifestStatus.Ready, reply);
+        }
+        catch (RelayException exception) when (exception.Refused)
+        {
+            // Old firmware, or firmware that simply registers no UI. Not logged:
+            // this is the ordinary answer for most of a mixed fleet.
+            return new DeviceUiView(UiManifestStatus.Absent, Detail: exception.Message);
+        }
+        catch (Exception exception)
+        {
+            logger.LogInformation(
+                "ui: {DeviceId} manifest read failed: {Message}", deviceId, exception.Message);
+            return new DeviceUiView(UiManifestStatus.Error, Detail: exception.Message);
+        }
+    }
+
+    /// <summary>
+    /// Runs one command on a device and hands back its reply text.
+    ///
+    /// This is the relay shell's half of the module contract's
+    /// <c>transport.request</c>: a module calls <c>request("led get")</c> and it
+    /// arrives here. It is NOT a new transport — it is the existing
+    /// <see cref="DeviceConnection"/> being asked for one more thing, over the pipe
+    /// the device already dialled, through the same gate as a file read. A shell
+    /// speaking the pipe itself would mean a socket per device with its own
+    /// reconnect and lifecycle, reimplementing in a browser what
+    /// <c>DeviceConnection</c> already is.
+    ///
+    /// The reply is returned unparsed, so nothing here has to know any command's
+    /// shape. Every command in the device's table is reachable, which is the same
+    /// reach a browser already has through <c>/devices/&lt;id&gt;/ws</c> — this is
+    /// not a permission boundary and does not pretend to be one.
+    ///
+    /// Failure comes back as a RESULT, not as an exception. See
+    /// <see cref="DeviceCommandResult"/>: SignalR rewrites a thrown exception's
+    /// message, and the contract promises a module the device's own words.
+    /// </summary>
+    public async Task<DeviceCommandResult> DeviceCommand(
+        string deviceId, string command, Dictionary<string, JsonElement>? args)
+    {
+        var device = registry.Find(deviceId);
+        if (device is null || !device.Online)
+            return new DeviceCommandResult(false, Error: $"device '{deviceId}' is not connected");
+
+        try
+        {
+            var reply = await device.CommandAsync(command, args, Context.ConnectionAborted);
+            return new DeviceCommandResult(true, reply);
+        }
+        catch (RelayException exception)
+        {
+            return new DeviceCommandResult(
+                false, Error: exception.Message, Refused: exception.Refused);
+        }
+        catch (OperationCanceledException)
+        {
+            // The browser navigated away or closed. There is nobody left to tell.
+            return new DeviceCommandResult(false, Error: "cancelled");
+        }
     }
 
     /// <summary>Tells every open Cache page to re-read, including the one that acted.</summary>

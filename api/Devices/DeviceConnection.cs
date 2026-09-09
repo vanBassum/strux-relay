@@ -41,7 +41,7 @@ internal sealed class DeviceConnection
     private readonly TelemetryRouter telemetry;
     private readonly ILogger logger;
 
-    /// <summary>The relay's own web-read calls, by the session id it minted.</summary>
+    /// <summary>The relay's own requests, by the session id it minted.</summary>
     private readonly Dictionary<ushort, Channel<Chunk>> serverSessions = [];
 
     /// <summary>
@@ -413,7 +413,7 @@ internal sealed class DeviceConnection
         throw new RelayException("no free browser session ids");
     }
 
-    // ── the one command the relay issues ──────────────────────────────────────
+    // ── the commands the relay issues ─────────────────────────────────────────
 
     /// <summary>
     /// Asks the device for one frontend file. The reply is a JSON header line, a
@@ -421,6 +421,131 @@ internal sealed class DeviceConnection
     /// gzip and all, because the device owns how it stores its own frontend.
     /// </summary>
     public async Task<WebFile> WebReadAsync(string path, CancellationToken cancellationToken)
+    {
+        // Written out rather than serialised from a type: the device reads the
+        // envelope by name off the first line, so the key names are the contract
+        // and spelling them here is what keeps them visible.
+        var request = $"{{\"type\":\"web read\",\"path\":{JsonSerializer.Serialize(path)}}}\n";
+
+        byte[] bytes;
+        try
+        {
+            bytes = await RunSessionAsync(
+                Encoding.UTF8.GetBytes(request),
+                $"web read {path}",
+                // A device's whole frontend lives on its own partition, so its
+                // files are already bounded by something real. No relay-side
+                // ceiling here.
+                maxBytes: int.MaxValue,
+                cancellationToken);
+        }
+        catch (RelayException exception)
+        {
+            // The bare reason is right for a command — it goes to a module's own
+            // error handling — but here it ends up in a 502 body and in the cache
+            // log, where "not found" without a path is no use to anybody.
+            throw new RelayException(
+                $"web read {path}: {exception.Message}", exception.Refused);
+        }
+
+        var reply = bytes.AsSpan();
+
+        var newline = reply.IndexOf((byte)'\n');
+        if (newline < 0)
+            throw new RelayException("malformed web read reply (no header line)");
+
+        var header = JsonSerializer.Deserialize<WebFileHeader>(reply[..newline], WebFileJson)
+            ?? throw new RelayException("unparseable web read header");
+
+        return new WebFile(header, reply[(newline + 1)..].ToArray());
+    }
+
+    private static readonly JsonSerializerOptions WebFileJson =
+        new() { PropertyNameCaseInsensitive = true };
+
+    /// <summary>
+    /// A reply bigger than this is refused rather than accumulated. Unlike a web
+    /// read — bounded by the device's own partition — a command reply is bounded
+    /// by whatever a handler decides to write, and this call is reachable from a
+    /// browser. `log list` is the honest worst case at a few hundred KB.
+    /// </summary>
+    private const int MaxCommandReply = 1 << 20;
+
+    /// <summary>
+    /// Runs one ordinary command on the device and hands back its reply bytes,
+    /// verbatim.
+    ///
+    /// The sibling of <see cref="WebReadAsync"/>, and deliberately nothing more
+    /// than that: same gate, same session allocation, same reassembly, same idle
+    /// rule. It is not a second transport — it is one more thing this connection
+    /// can be asked for, which is what keeps the relay shell off the device pipe.
+    ///
+    /// The payload is NOT parsed here. The relay owns the session header and
+    /// nothing below it (see <see cref="SessionChunk"/>), so a reply travels to
+    /// whoever asked as the text the device wrote. That also means a command whose
+    /// reply is not UTF-8 text is not reachable this way; the file route exists for
+    /// those.
+    /// </summary>
+    public async Task<string> CommandAsync(
+        string command,
+        IReadOnlyDictionary<string, JsonElement>? args,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+            throw new RelayException("no command given");
+
+        var envelope = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(envelope))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("type", command);
+
+            if (args is not null)
+                foreach (var (name, value) in args)
+                {
+                    // The route is the command, not an argument. A caller passing
+                    // `type` in the args would otherwise emit it twice and the
+                    // device would read whichever came last — silently dispatching
+                    // something other than what was asked for.
+                    if (name == "type")
+                        continue;
+
+                    writer.WritePropertyName(name);
+                    value.WriteTo(writer);
+                }
+
+            writer.WriteEndObject();
+        }
+
+        var request = new byte[envelope.WrittenCount + 1];
+        envelope.WrittenSpan.CopyTo(request);
+        request[^1] = (byte)'\n';
+
+        // The device refuses an oversized frame rather than splitting it, so an
+        // envelope that does not fit has to fail here with a reason a caller can
+        // act on instead of as a silent non-answer.
+        if (request.Length > SessionChunk.MaxPayload)
+            throw new RelayException(
+                $"'{command}' arguments are {request.Length} bytes, over the device's "
+                + $"{SessionChunk.MaxPayload}-byte window");
+
+        var reply = await RunSessionAsync(
+            request, command, MaxCommandReply, cancellationToken);
+
+        return Encoding.UTF8.GetString(reply);
+    }
+
+    /// <summary>
+    /// One request/reply session on the pipe: take the gate, send, accumulate
+    /// chunks until FINAL, release. Both callers above are this plus their own
+    /// reading of the bytes that come back.
+    ///
+    /// <paramref name="what"/> is only ever put in an error message, and exists
+    /// because "the device went silent" is useless without saying what it went
+    /// silent about.
+    /// </summary>
+    private async Task<byte[]> RunSessionAsync(
+        byte[] request, string what, int maxBytes, CancellationToken cancellationToken)
     {
         var channel = Channel.CreateUnbounded<Chunk>();
         ushort session;
@@ -434,17 +559,12 @@ internal sealed class DeviceConnection
         var body = new ArrayBufferWriter<byte>();
         try
         {
-            // Written out rather than serialised from a type: the device reads the
-            // envelope by name off the first line, so the key names are the
-            // contract and spelling them here is what keeps them visible.
-            var request = $"{{\"type\":\"web read\",\"path\":{JsonSerializer.Serialize(path)}}}\n";
-            await SendAsync(
-                session, SessionChunk.FlagFinal, Encoding.UTF8.GetBytes(request), cancellationToken);
+            await SendAsync(session, SessionChunk.FlagFinal, request, cancellationToken);
 
             while (true)
             {
-                // Per chunk, not per reply: a large file arrives as many chunks and
-                // the same idleness rule applies to each wait.
+                // Per chunk, not per reply: a large reply arrives as many chunks
+                // and the same idleness rule applies to each wait.
                 using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 idle.CancelAfter(IdleTimeout);
 
@@ -455,12 +575,19 @@ internal sealed class DeviceConnection
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
-                    throw new RelayException($"device {DeviceId} went silent reading {path}");
+                    throw new RelayException($"device {DeviceId} went silent on {what}");
                 }
 
                 if ((chunk.Flags & SessionChunk.FlagReject) != 0)
+                    // The device's OWN reason, unwrapped — a handler's RequestError
+                    // arrives this way and is the most useful thing anyone gets to
+                    // see about a refused command.
                     throw new RelayException(
-                        $"device rejected web read: {Encoding.UTF8.GetString(chunk.Payload)}");
+                        Encoding.UTF8.GetString(chunk.Payload), refused: true);
+
+                if (body.WrittenCount + chunk.Payload.Length > maxBytes)
+                    throw new RelayException(
+                        $"reply to {what} exceeded {maxBytes} bytes");
 
                 body.Write(chunk.Payload);
                 if ((chunk.Flags & SessionChunk.FlagFinal) != 0)
@@ -474,19 +601,8 @@ internal sealed class DeviceConnection
             ReleaseGate(session);
         }
 
-        var reply = body.WrittenSpan;
-        var newline = reply.IndexOf((byte)'\n');
-        if (newline < 0)
-            throw new RelayException("malformed web read reply (no header line)");
-
-        var header = JsonSerializer.Deserialize<WebFileHeader>(reply[..newline], WebFileJson)
-            ?? throw new RelayException("unparseable web read header");
-
-        return new WebFile(header, reply[(newline + 1)..].ToArray());
+        return body.WrittenSpan.ToArray();
     }
-
-    private static readonly JsonSerializerOptions WebFileJson =
-        new() { PropertyNameCaseInsensitive = true };
 
 
     /// <summary>

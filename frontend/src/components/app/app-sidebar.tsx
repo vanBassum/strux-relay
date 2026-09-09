@@ -20,6 +20,7 @@ import type { Device } from "@/hooks/use-devices"
 import type { Session } from "@/hooks/use-relay"
 import { navIcon, type DeviceNavItem } from "@/lib/device-nav"
 import { deviceUiUrl } from "@/lib/device-url"
+import type { ManifestStatus } from "@/shell/module-registry"
 
 export function AppSidebar({
   session,
@@ -27,6 +28,8 @@ export function AppSidebar({
   onRelayPage,
   device,
   deviceNav,
+  navStatus,
+  navDetail,
   devicePage,
   onDevicePage,
 }: {
@@ -36,8 +39,11 @@ export function AppSidebar({
   onRelayPage: (page: RelayPage) => void
   /** The device in scope, or null when the device list is showing. */
   device: Device | null
-  /** Supplied per device, so a manifest can replace the source without touching this. */
+  /** Read off this device's manifest — firmware decides what is in here, not a build. */
   deviceNav: DeviceNavItem[]
+  /** Why the list above is empty, when it is. */
+  navStatus: ManifestStatus
+  navDetail: string
   devicePage: string | null
   onDevicePage: (page: string) => void
 }) {
@@ -108,6 +114,19 @@ export function AppSidebar({
                     )
                   })}
                 </SidebarMenu>
+
+                {/* Why the list above is empty, when it is — and only for the one
+                    status that is worth a word here. "No modules" needs no notice:
+                    the Open device UI button below IS the answer, and captioning
+                    the ordinary case would make most of a mixed fleet look
+                    deficient. A version mismatch is different: it is actionable,
+                    and without saying so a device that has pages looks like a
+                    device that has none. */}
+                {navStatus === "unsupported" && (
+                  <p className="text-muted-foreground px-2 text-xs group-data-[collapsible=icon]:hidden">
+                    {navDetail}
+                  </p>
+                )}
 
                 {/* The way out to the device's own site, in its own menu below the
                     contributed pages rather than among them. It is not another

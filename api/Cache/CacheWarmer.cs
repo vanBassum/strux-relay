@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using StruxRelay.Devices;
 
@@ -26,6 +27,20 @@ internal sealed partial class CacheWarmer(
     /// <summary>Files named by index.html: <c>"/assets/index-D3EqElo.js"</c>.</summary>
     [GeneratedRegex("""["']\.?(/assets/[^"']+)["']""")]
     private static partial Regex AssetReference();
+
+    /// <summary>
+    /// An HTML comment, so what is inside one can be dropped before scanning.
+    ///
+    /// Not hypothetical: Strux's index.html carries a long comment explaining its
+    /// import map, and that prose contains the string <c>"./assets/x"</c> as an
+    /// example. The warmer dutifully fetched <c>/assets/x</c>, got a 404, and every
+    /// warm of every device came out Partial with an error naming a file that does
+    /// not exist and was never meant to. A commented-out reference is not a served
+    /// asset either, so dropping comments is right in general and not a workaround
+    /// for one page's wording.
+    /// </summary>
+    [GeneratedRegex("""<!--.*?-->""", RegexOptions.Singleline)]
+    private static partial Regex HtmlComment();
 
     private const string Index = "/index.html";
 
@@ -68,6 +83,7 @@ internal sealed partial class CacheWarmer(
             }
 
             var paths = ReferencedAssets(index);
+            paths.AddRange(await ModuleBundlesAsync(device, cancellationToken));
             var expected = paths.Count + 1;
             cache.WarmStarted(deviceId, expected);
 
@@ -119,6 +135,74 @@ internal sealed partial class CacheWarmer(
     }
 
     /// <summary>
+    /// The module bundles the device's manifest names.
+    ///
+    /// Asked for rather than scraped, and that is the whole reason this exists: a
+    /// module bundle is named by the FIRMWARE, in a command reply, so no regex over
+    /// index.html can find it. Missing them would leave the first open of a module
+    /// page paying a live pipe round trip — the one thing the warmer is for.
+    ///
+    /// The manifest itself is deliberately not cached. It is read here and thrown
+    /// away; the shell asks the device directly every time, because a stale nav is a
+    /// sidebar full of pages that then fail.
+    ///
+    /// A device that ships no modules refuses the command, and that is the ordinary
+    /// case for most of a mixed fleet — so it costs one round trip and no warning.
+    /// </summary>
+    private async Task<List<string>> ModuleBundlesAsync(
+        DeviceConnection device, CancellationToken cancellationToken)
+    {
+        string reply;
+        try
+        {
+            reply = await device.CommandAsync("ui modules", null, cancellationToken);
+        }
+        catch (RelayException exception) when (exception.Refused)
+        {
+            return [];
+        }
+        catch (Exception exception)
+        {
+            // Not the warm failing. The frontend is already warmed at this point
+            // and a device page works without this; all that is lost is the head
+            // start on one file.
+            logger.LogInformation(
+                "cache: {DeviceId} manifest read failed: {Message}",
+                device.DeviceId, exception.Message);
+            return [];
+        }
+
+        try
+        {
+            using var manifest = JsonDocument.Parse(reply);
+            if (!manifest.RootElement.TryGetProperty("modules", out var modules)
+                || modules.ValueKind != JsonValueKind.Array)
+                return [];
+
+            return [.. modules
+                .EnumerateArray()
+                .Select(module =>
+                    module.TryGetProperty("entry", out var entry) && entry.ValueKind == JsonValueKind.String
+                        ? entry.GetString()
+                        : null)
+                // Absolute paths only: the cache keys on the path the device would
+                // be asked for, and a relative one would key on something no
+                // request can produce.
+                .Where(entry => !string.IsNullOrEmpty(entry) && entry.StartsWith('/'))
+                .Select(entry => entry!)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)];
+        }
+        catch (JsonException exception)
+        {
+            logger.LogInformation(
+                "cache: {DeviceId} sent an unparseable manifest: {Message}",
+                device.DeviceId, exception.Message);
+            return [];
+        }
+    }
+
+    /// <summary>
     /// The asset paths index.html names. The device stores its frontend gzipped
     /// and it is served through untouched, so reading the references out of it
     /// means decompressing a copy here and throwing it away.
@@ -144,7 +228,7 @@ internal sealed partial class CacheWarmer(
             }
         }
 
-        var text = Encoding.UTF8.GetString(body);
+        var text = HtmlComment().Replace(Encoding.UTF8.GetString(body), "");
 
         return [.. AssetReference()
             .Matches(text)

@@ -9,6 +9,44 @@
     <link rel="icon" type="image/svg+xml" href="/strux.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Strux relay</title>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "/assets/host-react.js",
+          "react/jsx-runtime": "/assets/host-jsx-runtime.js"
+        }
+      }
+    </script>
+    <!--
+      The import map is how a DEVICE's module bundle reaches this page's React
+      instead of carrying its own copy. Two React instances is the one thing that
+      genuinely breaks, so it is load-bearing.
+
+      Written by hand rather than injected because an import map has to precede any
+      module load, and Vite appends its own module tag to the end of head. Vite also
+      relocates script elements when it builds, so where the map sits relative to
+      THIS comment is not what ends up in the output - check the built index.html,
+      where what matters is that the map still comes before Vite's injected module
+      script.
+
+      What this comment must not do is contain the characters that open a script
+      element. Vite parses the HTML, and upstream a comment with such a tag in it
+      caused the real import map to be hoisted into the comment body, where a
+      browser would never have run it. Nothing warns about that: the map simply
+      stops existing.
+
+      ABSOLUTE paths here, unlike Strux's own index.html which uses relative ones.
+      Not an inconsistency: that page is served both at a device's root and under
+      the relay's /devices/<id>/ prefix, so it cannot know its own mount point. This
+      one is always served from this relay's root, and the build emits absolute
+      asset URLs to match. A relative map would break on the SPA fallback, which
+      answers a mistyped /foo/bar with this document and would then resolve
+      ./assets against /foo/.
+
+      The two targets are emitted without a content hash (see vite.config.ts) so
+      this snippet can be static instead of injected by a build plugin.
+    -->
   </head>
   <body>
     <div id="root"></div>

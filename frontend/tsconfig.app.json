@@ -22,8 +22,9 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@shell/*": ["./shell-contract/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "shell-contract"]
 }
