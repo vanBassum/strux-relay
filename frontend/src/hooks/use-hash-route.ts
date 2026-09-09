@@ -18,12 +18,43 @@ import { RELAY_PAGES, type RelayPage } from "@/components/app/navigation"
  * has to survive a refresh, be linkable, and answer the back button — none of which
  * component state can do.
  */
+/// Which page of a device is showing.
+///
+/// A union rather than one string, because the two halves come from different places
+/// and can collide: `console` and `settings` are THIS shell's pages for any device,
+/// while a module page id comes from firmware, which could perfectly reasonably
+/// declare a page called "settings". So a module page is addressed under `module/`,
+/// the same separation Strux's own shell makes with `#/module/<id>`.
+///
+/// `null` is the overview — the device's contributed cards — which is the landing page
+/// and needs no name in the URL.
+export type DevicePage =
+  | { kind: "shell"; page: DeviceShellPage }
+  | { kind: "module"; id: string }
+
+/// Pages this shell provides for every device, whatever its firmware contributes.
+/// They are framework features — `settings list` and `log list` exist on every Strux
+/// device and describe themselves — so they are not modules and never will be.
+export const DEVICE_SHELL_PAGES = ["console", "settings"] as const
+export type DeviceShellPage = (typeof DEVICE_SHELL_PAGES)[number]
+
+function isDeviceShellPage(value: string): value is DeviceShellPage {
+  return (DEVICE_SHELL_PAGES as readonly string[]).includes(value)
+}
+
 export type Route =
   | { kind: "relay"; page: RelayPage }
-  /** `page` is null until a manifest says which pages exist; the shell picks the first. */
-  | { kind: "device"; deviceId: string; page: string | null }
+  | { kind: "device"; deviceId: string; page: DevicePage | null }
 
 export const HOME: Route = { kind: "relay", page: "devices" }
+
+export function sameDevicePage(a: DevicePage | null, b: DevicePage | null): boolean {
+  if (a === null || b === null) return a === b
+  if (a.kind !== b.kind) return false
+  return a.kind === "module" && b.kind === "module"
+    ? a.id === b.id
+    : a.kind === "shell" && b.kind === "shell" && a.page === b.page
+}
 
 const RELAY_IDS = new Set<string>(RELAY_PAGES.map((page) => page.id))
 
@@ -33,7 +64,10 @@ const RELAY_IDS = new Set<string>(RELAY_PAGES.map((page) => page.id))
 export function routeHash(route: Route): string {
   if (route.kind === "relay") return `#/${route.page}`
   const id = encodeURIComponent(route.deviceId)
-  return route.page ? `#/devices/${id}/${encodeURIComponent(route.page)}` : `#/devices/${id}`
+  if (!route.page) return `#/devices/${id}`
+  return route.page.kind === "module"
+    ? `#/devices/${id}/module/${encodeURIComponent(route.page.id)}`
+    : `#/devices/${id}/${route.page.page}`
 }
 
 function parse(hash: string): Route {
@@ -45,8 +79,22 @@ function parse(hash: string): Route {
 
   if (parts.length === 0) return HOME
 
-  if (parts[0] === "devices" && parts[1])
-    return { kind: "device", deviceId: parts[1], page: parts[2] ?? null }
+  if (parts[0] === "devices" && parts[1]) {
+    const deviceId = parts[1]
+    if (!parts[2]) return { kind: "device", deviceId, page: null }
+    if (parts[2] === "module")
+      // Not validated against the manifest here: the manifest arrives over the wire,
+      // after the first render, and a route that waited for it would flash the
+      // overview on every reload of a module page. DevicePage resolves the id and
+      // reports an unknown one.
+      return parts[3]
+        ? { kind: "device", deviceId, page: { kind: "module", id: parts[3] } }
+        : { kind: "device", deviceId, page: null }
+    if (isDeviceShellPage(parts[2]))
+      return { kind: "device", deviceId, page: { kind: "shell", page: parts[2] } }
+    // An unknown page falls back to the overview, which always exists.
+    return { kind: "device", deviceId, page: null }
+  }
 
   // An unknown relay page lands on Devices rather than on an error screen: a stale
   // bookmark is not a fault, and the list is always a useful place to be.

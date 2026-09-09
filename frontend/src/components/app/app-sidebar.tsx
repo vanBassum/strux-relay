@@ -1,4 +1,4 @@
-import { HouseIcon, RadioTowerIcon } from "lucide-react"
+import { HouseIcon, RadioTowerIcon, SettingsIcon, TerminalIcon } from "lucide-react"
 
 import {
   Sidebar,
@@ -20,6 +20,23 @@ import type { Device } from "@/hooks/use-devices"
 import type { Session } from "@/hooks/use-relay"
 import { navIcon, type DeviceNavItem } from "@/lib/device-nav"
 import type { ManifestStatus } from "@/shell/module-registry"
+import {
+  sameDevicePage,
+  type DevicePage,
+  type DeviceShellPage,
+} from "@/hooks/use-hash-route"
+
+/// This shell's own per-device pages. Components here rather than icon names,
+/// unlike the module nav: these are compiled in, so there is no wire format to
+/// survive and no indirection to earn its keep.
+const DEVICE_TOOLS: {
+  page: DeviceShellPage
+  label: string
+  icon: typeof TerminalIcon
+}[] = [
+  { page: "console", label: "Console", icon: TerminalIcon },
+  { page: "settings", label: "Settings", icon: SettingsIcon },
+]
 
 export function AppSidebar({
   session,
@@ -44,9 +61,9 @@ export function AppSidebar({
   /** Why the list above is empty, when it is. */
   navStatus: ManifestStatus
   navDetail: string
-  /** A module page, or null when the device's overview is showing. */
-  devicePage: string | null
-  onDevicePage: (page: string) => void
+  /** Which device page is showing, or null for the overview. */
+  devicePage: DevicePage | null
+  onDevicePage: (page: DevicePage) => void
   /** The overview is this SHELL's page for a device, so it gets its own handler. */
   onDeviceOverview: () => void
 }) {
@@ -123,9 +140,12 @@ export function AppSidebar({
                     return (
                       <SidebarMenuItem key={item.id}>
                         <SidebarMenuButton
-                          isActive={item.id === devicePage}
+                          isActive={sameDevicePage(devicePage, {
+                            kind: "module",
+                            id: item.id,
+                          })}
                           tooltip={item.label}
-                          onClick={() => onDevicePage(item.id)}
+                          onClick={() => onDevicePage({ kind: "module", id: item.id })}
                         >
                           <Icon />
                           <span>{item.label}</span>
@@ -133,6 +153,26 @@ export function AppSidebar({
                       </SidebarMenuItem>
                     )
                   })}
+                </SidebarMenu>
+
+                {/* This shell's own pages for a device, below whatever the firmware
+                    contributed. Below, because the order says what belongs to whom:
+                    Overview and the module pages are this product; these two are the
+                    framework's — every Strux device has `log list` and
+                    `settings list`, which is exactly why they are not modules. */}
+                <SidebarMenu>
+                  {DEVICE_TOOLS.map(({ page, label, icon: Icon }) => (
+                    <SidebarMenuItem key={page}>
+                      <SidebarMenuButton
+                        isActive={sameDevicePage(devicePage, { kind: "shell", page })}
+                        tooltip={label}
+                        onClick={() => onDevicePage({ kind: "shell", page })}
+                      >
+                        <Icon />
+                        <span>{label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
                 </SidebarMenu>
 
                 {/* Why the list above is empty, when it is — and only for the one

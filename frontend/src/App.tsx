@@ -11,7 +11,12 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { useTheme } from "@/components/theme-provider"
-import { HOME, useHashRoute } from "@/hooks/use-hash-route"
+import {
+  HOME,
+  sameDevicePage,
+  useHashRoute,
+  type DevicePage as DevicePageRoute,
+} from "@/hooks/use-hash-route"
 import { useDevices } from "@/hooks/use-devices"
 import { RelayProvider, useRelay, useRelayContext } from "@/hooks/use-relay"
 import { useDeviceModules } from "@/shell/module-host"
@@ -47,24 +52,30 @@ function Workspace() {
   // reconnects: it may have been reflashed while it was away.
   const modules = useDeviceModules(selected)
 
-  // The requested page may not be one this device offers — with nav coming from a
-  // manifest that is the normal case, not an edge one, because two devices offer
-  // different pages and a bookmark outlives a reflash. So it is validated against the
-  // manifest rather than trusted, and anything unrecognised falls back to the
-  // overview, which is this shell's own page and always exists.
+  // A MODULE page in the URL may not be one this device offers — with nav coming from
+  // a manifest that is the normal case, not an edge one, because two devices offer
+  // different pages and a bookmark outlives a reflash. So a module id is validated
+  // against the manifest; this shell's own pages need no validation, since they exist
+  // for every device whatever its firmware says.
   const requested = route.kind === "device" ? route.page : null
-  const devicePage = selected
-    ? (modules.nav.find((item) => item.id === requested)?.id ?? null)
-    : null
-  const activeItem = modules.nav.find((item) => item.id === devicePage) ?? null
+  const devicePage: DevicePageRoute | null = !selected
+    ? null
+    : requested?.kind === "module"
+      ? (modules.nav.some((item) => item.id === requested.id) ? requested : null)
+      : (requested ?? null)
 
-  // A page id in the URL that this device does not have gets corrected to the
-  // overview. `replace`, not `navigate`: the user did not ask for this step, and it
-  // would otherwise sit in the back stack redirecting forward again. Only once the
-  // manifest has actually answered — before that "not found" only means "not yet".
+  const activeItem =
+    devicePage?.kind === "module"
+      ? (modules.nav.find((item) => item.id === devicePage.id) ?? null)
+      : null
+
+  // A module id this device does not have gets corrected to the overview. `replace`,
+  // not `navigate`: the user did not ask for this step, and it would otherwise sit in
+  // the back stack redirecting forward again. Only once the manifest has actually
+  // answered — before that, "not found" only means "not yet".
   useEffect(() => {
     if (route.kind !== "device" || modules.status === "loading") return
-    if (!route.page || devicePage === route.page) return
+    if (!route.page || sameDevicePage(route.page, devicePage)) return
     replace({ kind: "device", deviceId: route.deviceId, page: null })
   }, [route, devicePage, modules.status, replace])
 
@@ -119,7 +130,7 @@ function Workspace() {
                         page: null,
                       }),
                   },
-                  { label: activeItem ? activeItem.label : "Overview" },
+                  { label: crumbFor(devicePage, activeItem?.label) },
                 ]
               : [
                   {
@@ -134,7 +145,7 @@ function Workspace() {
           {onDevice ? (
             <DevicePage
               device={selected}
-              pageId={devicePage}
+              page={devicePage}
               status={modules.status}
               detail={modules.detail}
             />
@@ -153,6 +164,13 @@ function Workspace() {
       </SidebarInset>
     </>
   )
+}
+
+/// What the breadcrumb calls the current device page.
+function crumbFor(page: DevicePageRoute | null, moduleLabel?: string): string {
+  if (!page) return "Overview"
+  if (page.kind === "module") return moduleLabel ?? page.id
+  return page.page === "console" ? "Console" : "Settings"
 }
 
 export function App() {

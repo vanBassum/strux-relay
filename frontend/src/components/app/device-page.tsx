@@ -6,6 +6,9 @@ import type { Device } from "@/hooks/use-devices"
 import { deviceUiUrl } from "@/lib/device-url"
 import type { ManifestStatus } from "@/shell/module-registry"
 import { ModulePageView, useDeviceCards } from "@/shell/module-host"
+import type { DevicePage as DevicePageRoute } from "@/hooks/use-hash-route"
+import { DeviceConsolePage } from "@/components/app/device-console-page"
+import { DeviceSettingsPage } from "@/components/app/device-settings-page"
 
 /**
  * One device, in this shell.
@@ -29,17 +32,28 @@ import { ModulePageView, useDeviceCards } from "@/shell/module-host"
  */
 export function DevicePage({
   device,
-  pageId,
+  page,
   status,
   detail,
 }: {
   device: Device
-  /** A module page, or null for this device's overview. */
-  pageId: string | null
+  /** A module page, one of this shell's own device pages, or null for the overview. */
+  page: DevicePageRoute | null
   status: ManifestStatus
   detail: string
 }) {
-  if (pageId) return <ModulePageView device={device} pageId={pageId} />
+  if (page?.kind === "module")
+    return <ModulePageView device={device} pageId={page.id} />
+
+  if (page?.kind === "shell")
+    // Framework pages, not modules: every Strux device has `log list` and
+    // `settings list`, and both describe themselves.
+    return page.page === "console" ? (
+      <DeviceConsolePage device={device} />
+    ) : (
+      <DeviceSettingsPage device={device} />
+    )
+
   return <DeviceOverview device={device} status={status} detail={detail} />
 }
 
