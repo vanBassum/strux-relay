@@ -219,17 +219,43 @@ The shell contract is vendored from Strux byte-identical with a lock file, and
 being ahead is a warning: this shell may deliberately speak an older `hostApi` and
 tells a device so through the manifest's range.
 
+## A device's own pages
+
+Beside its *Overview* — the cards its firmware contributes — every device gets
+Console, Settings and Firmware from this shell. They are **not** modules and will not
+become modules: they are framework features every Strux device has, and each one
+already describes itself, so the page is generated from a declaration rather than
+drawn by code only the firmware could supply. A module would also put the framework's
+own UI in every product's firmware, where a fork could ship without it.
+
+* **Settings** — `settings list` / `set` / `save`. Narrower than the device's own
+  version on purpose: no raw JSON editor and no Wi-Fi picker, since neither is needed
+  to change a value from across the internet. Secret-looking keys are masked, which is
+  a mitigation and not a fix — the device sends them in the clear.
+* **Console** — `log list`, **polled**. Session-0 broadcasts fan out to browser pipes,
+  not to hub clients, so a live tail needs a per-device hub group; what this gives
+  instead is the whole ring buffer, which reaches back before the page was opened.
+* **Firmware** — `partition status` / `list`, and an upload. The upload is the one
+  thing `CommandAsync` cannot express: writing an image is a *session*, not one
+  envelope and one reply, so `DeviceConnection.PartitionUploadAsync` sends a non-FINAL
+  envelope, streams the body 4 KB at a time, and reads one reply at end-of-stream. It
+  erases, writes, then activates — and activates only once every byte landed, so a
+  failed upload leaves the old slot booting.
+
+  It arrives over `POST /devices/{id}/partition/{label}`, HTTP rather than the hub
+  because an upload is a request body: the hub's JSON protocol would carry the image
+  as base64, a third larger and buffered as strings, where `Request.Body` is a stream
+  that can be handed to the pipe as it arrives. Which partitions may be written is the
+  DEVICE's answer — `partition list` reports `uploadable` — rather than a rule
+  reproduced in the browser.
+
 ## Not built yet
 
-* **Console, Settings and Firmware for a device.** The relay shell gives a device an
-  *Overview* — its contributed cards — and nothing else, while the device's own shell
-  has had all three for a long time. They are **not** modules and must not become
-  modules: they are framework features every Strux device has, and `settings list`
-  already describes itself. Settings needs nothing new here; a live Console needs a
-  per-device hub group, because session-0 broadcasts reach browser pipes and not hub
-  clients; Firmware needs a streaming sibling to `CommandAsync`, because an upload is
-  a session and not one envelope plus one reply. Until then *Open device UI* serves
-  the device's own page over the same pipe, so nothing is unreachable.
+* **A live Console.** See above: it needs the relay to push session-0 chunks to a
+  per-device hub group.
+* **Device-side flash progress.** The browser sees its own upload progress, which
+  tracks closely because the relay forwards chunk by chunk, but the device's own write
+  position is not surfaced — that would need a hub group per upload.
 
 Also missing, and never present: TLS (the proxy's job), and any way to block a
 device for good — rejecting only forgets it, and a refused device keeps retrying.

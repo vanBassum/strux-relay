@@ -105,6 +105,69 @@ app.MapGet("/devices/{deviceId}/ws", (
         ILoggerFactory loggers) =>
     BrowserPipe.HandleAsync(context, deviceId, registry, loggers));
 
+// A firmware image, streamed into one of a device's partitions.
+//
+// HTTP and not the hub, and for once not because a browser needs a URL: an upload
+// is a REQUEST BODY. The hub's JSON protocol would carry 1.2 MB of image as
+// base64 — a third more bytes, all of it buffered as strings — while
+// `Request.Body` is a stream the relay can read 4 KB at a time and hand straight
+// to the device. It is a POST rather than a GET for the same reason every other
+// route here is a GET: this one changes something.
+//
+// Registered BEFORE the catch-all below it, which would otherwise match
+// /devices/{id}/partition/{label} and go looking for a file by that name.
+app.MapPost("/devices/{deviceId}/partition/{label}", async (
+        HttpContext context,
+        string deviceId,
+        string label,
+        DeviceRegistry registry,
+        ILoggerFactory loggers) =>
+{
+    var device = registry.Find(deviceId);
+    if (device is null || !device.Online)
+        return Results.Problem($"device '{deviceId}' is not connected", statusCode: 503);
+
+    // Default true: an app slot is useless until it is the boot slot, so the common
+    // case should not need saying. A data partition passes activate=false, because
+    // `partition activate` validates an app image and would fail on one.
+    var activate = context.Request.Query["activate"] != "0";
+
+    var logger = loggers.CreateLogger("StruxRelay.Firmware");
+    try
+    {
+        var written = await device.PartitionUploadAsync(
+            label,
+            context.Request.Body,
+            activate,
+            // Logged rather than pushed anywhere: the browser already has its own
+            // upload progress, and a second channel to report the device's write
+            // position would need a hub group per upload. Worth having in the log
+            // when somebody asks why a flash took two minutes.
+            progress: null,
+            context.RequestAborted);
+
+        logger.LogInformation(
+            "firmware: wrote {Bytes} bytes to {Label} on {DeviceId}{Activated}",
+            written, label, deviceId, activate ? " and activated it" : "");
+
+        return Results.Json(new { ok = true, size = written, activated = activate });
+    }
+    catch (OperationCanceledException)
+    {
+        // The browser gave up mid-upload. The device is left with an erased slot,
+        // which is exactly the state it would be in after any failed upload: the
+        // OLD slot still boots, so nothing is bricked.
+        logger.LogInformation("firmware: upload of {Label} to {DeviceId} was cancelled", label, deviceId);
+        return Results.Empty;
+    }
+    catch (RelayException exception)
+    {
+        logger.LogWarning(
+            "firmware: {Label} on {DeviceId} failed: {Message}", label, deviceId, exception.Message);
+        return Results.Problem(exception.Message, statusCode: 502);
+    }
+});
+
 // The device's own frontend, proxied over its pipe and served from the cache when
 // it can be. Not an API — a browser fetches these by URL, and an ES module import
 // needs a real one with a real MIME type — so it is HTTP and not the hub.

@@ -9,6 +9,7 @@ import { ModulePageView, useDeviceCards } from "@/shell/module-host"
 import type { DevicePage as DevicePageRoute } from "@/hooks/use-hash-route"
 import { DeviceConsolePage } from "@/components/app/device-console-page"
 import { DeviceSettingsPage } from "@/components/app/device-settings-page"
+import { DeviceFirmwarePage } from "@/components/app/device-firmware-page"
 
 /**
  * One device, in this shell.
@@ -45,14 +46,13 @@ export function DevicePage({
   if (page?.kind === "module")
     return <ModulePageView device={device} pageId={page.id} />
 
-  if (page?.kind === "shell")
-    // Framework pages, not modules: every Strux device has `log list` and
-    // `settings list`, and both describe themselves.
-    return page.page === "console" ? (
-      <DeviceConsolePage device={device} />
-    ) : (
-      <DeviceSettingsPage device={device} />
-    )
+  if (page?.kind === "shell") {
+    // Framework pages, not modules: every Strux device has `log list`,
+    // `settings list` and `partition list`, and all three describe themselves.
+    if (page.page === "console") return <DeviceConsolePage device={device} />
+    if (page.page === "settings") return <DeviceSettingsPage device={device} />
+    return <DeviceFirmwarePage device={device} />
+  }
 
   return <DeviceOverview device={device} status={status} detail={detail} />
 }

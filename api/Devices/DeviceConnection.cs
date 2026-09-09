@@ -536,6 +536,202 @@ internal sealed class DeviceConnection
     }
 
     /// <summary>
+    /// Writes an image to one of the device's partitions, streaming it.
+    ///
+    /// The one thing <see cref="CommandAsync"/> cannot express. A command is a single
+    /// envelope and a single reply; this is a SESSION — an envelope chunk that is
+    /// deliberately not FINAL, then the image as body chunks on the same session id,
+    /// then one reply at end-of-stream. It is the same shape the device's own page
+    /// uses, because it is the same handler on the far side.
+    ///
+    /// Three steps, and the order is load-bearing:
+    ///
+    /// 1. <c>partition clear</c>. `partition write` never erases, and flash bits only
+    ///    clear on erase, so writing over stale content yields an image that fails
+    ///    validation later — at activate, long after the upload looked fine.
+    /// 2. The streamed write.
+    /// 3. <c>partition activate</c>, and only once every byte landed. Until that call
+    ///    the old slot still boots, so a failed upload leaves the device intact.
+    ///
+    /// Each step takes the gate separately rather than holding it across all three.
+    /// Holding it would be easier to reason about and is not possible: the gate is not
+    /// reentrant, so calling CommandAsync while holding it would deadlock against
+    /// itself. The window between steps is the same one the device's own page has.
+    /// </summary>
+    /// <param name="progress">
+    /// Device-reported bytes written — it streams <c>{"p":n}</c> as it flashes. That is
+    /// its own write position rather than what has been handed to the socket, which is
+    /// the only number that means anything here: the OS buffers the send, so
+    /// bytes-sent races to the end while the flash write is still in flight.
+    /// </param>
+    public async Task<long> PartitionUploadAsync(
+        string partition,
+        Stream body,
+        bool activate,
+        Action<long>? progress,
+        CancellationToken cancellationToken)
+    {
+        var arg = new Dictionary<string, JsonElement>
+        {
+            ["partition"] = JsonSerializer.SerializeToElement(partition),
+        };
+
+        RequireOk(
+            await CommandAsync("partition clear", arg, cancellationToken),
+            $"clearing {partition}");
+
+        var written = await StreamPartitionAsync(partition, body, progress, cancellationToken);
+
+        if (activate)
+            RequireOk(
+                await CommandAsync("partition activate", arg, cancellationToken),
+                $"activating {partition}");
+
+        return written;
+    }
+
+    /// <summary>Step 2 on its own: the envelope, the body, and the one reply.</summary>
+    private async Task<long> StreamPartitionAsync(
+        string partition,
+        Stream body,
+        Action<long>? progress,
+        CancellationToken cancellationToken)
+    {
+        var channel = Channel.CreateUnbounded<Chunk>();
+        ushort session;
+        lock (serverSessions)
+        {
+            session = AllocateServerSession();
+            serverSessions[session] = channel;
+        }
+
+        await AcquireGateAsync(session, cancellationToken);
+        var sent = 0L;
+        try
+        {
+            var request = "{\"type\":\"partition write\",\"partition\":"
+                + JsonSerializer.Serialize(partition) + "}\n";
+
+            // NOT final: the body follows on this same session id, which is what makes
+            // this a session rather than a command.
+            await SendAsync(session, 0, Encoding.UTF8.GetBytes(request), cancellationToken);
+            TouchGate(session);
+
+            var buffer = ArrayPool<byte>.Shared.Rent(SessionChunk.MaxPayload);
+            try
+            {
+                while (true)
+                {
+                    var read = await body.ReadAsync(
+                        buffer.AsMemory(0, SessionChunk.MaxPayload), cancellationToken);
+                    if (read == 0)
+                        break;
+
+                    sent += read;
+                    // Every body chunk is non-final and the stream is closed by an
+                    // explicit empty FINAL below, rather than by deciding which read
+                    // was the last one. A request body has no length worth trusting —
+                    // it may well be chunked — so "was that the end" is only
+                    // answerable after the next read returns nothing.
+                    await SendAsync(session, 0, buffer.AsMemory(0, read), cancellationToken);
+                    TouchGate(session);
+                }
+
+                // Closes the request direction. Also the entire upload for a
+                // zero-length image, which the device still has to be told about.
+                await SendAsync(
+                    session, SessionChunk.FlagFinal, ReadOnlyMemory<byte>.Empty, cancellationToken);
+                TouchGate(session);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+
+            // One reply at end-of-stream, preceded by however many progress records
+            // the device felt like sending.
+            while (true)
+            {
+                using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                idle.CancelAfter(IdleTimeout);
+
+                Chunk chunk;
+                try
+                {
+                    chunk = await channel.Reader.ReadAsync(idle.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw new RelayException(
+                        $"device {DeviceId} went silent writing {partition} after {sent} bytes");
+                }
+
+                if ((chunk.Flags & SessionChunk.FlagReject) != 0)
+                    throw new RelayException(
+                        Encoding.UTF8.GetString(chunk.Payload), refused: true);
+
+                if ((chunk.Flags & SessionChunk.FlagFinal) != 0)
+                {
+                    RequireOk(Encoding.UTF8.GetString(chunk.Payload), $"writing {partition}");
+                    return sent;
+                }
+
+                // A progress record: the only thing on this session that is not the
+                // answer. Parsed rather than forwarded, and a malformed one is
+                // ignored — it is not worth failing an upload over.
+                if (progress is not null)
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(chunk.Payload);
+                        if (doc.RootElement.TryGetProperty("p", out var p)
+                            && p.TryGetInt64(out var at))
+                            progress(at);
+                    }
+                    catch (JsonException)
+                    {
+                    }
+                }
+            }
+        }
+        finally
+        {
+            lock (serverSessions)
+                serverSessions.Remove(session);
+            ReleaseGate(session);
+        }
+    }
+
+    /// <summary>
+    /// The partition commands answer <c>{"ok":true}</c> or
+    /// <c>{"ok":false,"error":…}</c> rather than refusing the session, so a failure
+    /// arrives as a SUCCESSFUL reply and has to be read out of the payload. Missed,
+    /// an upload reports success and the device goes on booting the old image.
+    /// </summary>
+    private static void RequireOk(string reply, string what)
+    {
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(reply);
+        }
+        catch (JsonException)
+        {
+            throw new RelayException($"{what}: unparseable reply from the device");
+        }
+
+        using (doc)
+        {
+            if (doc.RootElement.TryGetProperty("ok", out var ok)
+                && ok.ValueKind == JsonValueKind.False)
+                throw new RelayException(
+                    doc.RootElement.TryGetProperty("error", out var error)
+                        ? $"{what}: {error.GetString()}"
+                        : $"{what} failed");
+        }
+    }
+
+    /// <summary>
     /// One request/reply session on the pipe: take the gate, send, accumulate
     /// chunks until FINAL, release. Both callers above are this plus their own
     /// reading of the bytes that come back.

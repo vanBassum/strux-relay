@@ -35,7 +35,7 @@ export type DevicePage =
 /// Pages this shell provides for every device, whatever its firmware contributes.
 /// They are framework features — `settings list` and `log list` exist on every Strux
 /// device and describe themselves — so they are not modules and never will be.
-export const DEVICE_SHELL_PAGES = ["console", "settings"] as const
+export const DEVICE_SHELL_PAGES = ["console", "settings", "firmware"] as const
 export type DeviceShellPage = (typeof DEVICE_SHELL_PAGES)[number]
 
 function isDeviceShellPage(value: string): value is DeviceShellPage {

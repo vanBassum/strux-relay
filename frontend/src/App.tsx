@@ -170,7 +170,7 @@ function Workspace() {
 function crumbFor(page: DevicePageRoute | null, moduleLabel?: string): string {
   if (!page) return "Overview"
   if (page.kind === "module") return moduleLabel ?? page.id
-  return page.page === "console" ? "Console" : "Settings"
+  return page.page.charAt(0).toUpperCase() + page.page.slice(1)
 }
 
 export function App() {

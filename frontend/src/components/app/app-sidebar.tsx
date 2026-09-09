@@ -1,4 +1,10 @@
-import { HouseIcon, RadioTowerIcon, SettingsIcon, TerminalIcon } from "lucide-react"
+import {
+  DownloadIcon,
+  HouseIcon,
+  RadioTowerIcon,
+  SettingsIcon,
+  TerminalIcon,
+} from "lucide-react"
 
 import {
   Sidebar,
@@ -36,6 +42,7 @@ const DEVICE_TOOLS: {
 }[] = [
   { page: "console", label: "Console", icon: TerminalIcon },
   { page: "settings", label: "Settings", icon: SettingsIcon },
+  { page: "firmware", label: "Firmware", icon: DownloadIcon },
 ]
 
 export function AppSidebar({
