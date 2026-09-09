@@ -55,9 +55,82 @@ export interface DeviceTransport {
   /// contends with the cache warmer and with other operators: poll slowly, and prefer
   /// one command that answers in one round trip.
   request<T = unknown>(command: string, args?: Record<string, unknown>): Promise<T>;
+
+  /// Sends a command whose request has a BODY: an envelope chunk, then `body` streamed
+  /// on the same session, then one reply. `partition write` is the reason this exists —
+  /// a firmware image is not an argument.
+  ///
+  /// Separate from `request` because it is a different shape on the wire, not because
+  /// it is a different destination. A module still names an ordinary command and still
+  /// gets the device's own reply; what changes is that the request does not fit in one
+  /// chunk. Anything a handler needs *before* the body still goes in `args`.
+  ///
+  /// `onProgress` reports a fraction between 0 and 1 and is best-effort: on the device
+  /// shell it is the device's own write position, which is the honest number, and
+  /// through the relay it is bytes accepted by the relay, which lags the flash write at
+  /// the tail. Neither is a guarantee that anything landed — the reply is.
+  upload<T = unknown>(
+    command: string,
+    args: Record<string, unknown> | undefined,
+    body: Blob,
+    onProgress?: (fraction: number) => void,
+  ): Promise<T>;
+
+  /// The mirror of `upload`: a command whose REPLY is a stream rather than a value.
+  /// `partition read` is the reason — a flash image is not a JSON field.
+  ///
+  /// Resolves with the bytes. What the caller does with them is the caller's business:
+  /// this deliberately does not save a file, because "hand the user a download" is a
+  /// shell concern on one host and a different one on the other, while "give me the
+  /// bytes" is the same everywhere.
+  ///
+  /// `onProgress` is a fraction when the total is known — a partition's size comes
+  /// from the partition table, which the module has and the transport does not — and
+  /// is not called at all when it is not.
+  download(
+    command: string,
+    args?: Record<string, unknown>,
+    total?: number,
+    onProgress?: (fraction: number) => void,
+  ): Promise<Blob>;
+
+  /// The device's log lines, as they are written. Returns its own unsubscribe.
+  ///
+  /// The ONE device-initiated stream in the system, and it is here because it exists
+  /// rather than because a general subscription mechanism was wanted: the device
+  /// broadcasts on session 0 and always has. There is still no `subscribe(topic)` and
+  /// no per-feature events — see the note on ShellProvider — so this is spelled out as
+  /// what it is instead of being the first user of a framework with one user.
+  ///
+  /// Lines arrive only while the shell is attached, so a module that wants what came
+  /// before it opened must also ask `log list`. Nothing is replayed.
+  logs(handler: (line: DeviceLogLine) => void): () => void;
 }
 
-/// A page a module contributes to the shell's navigation.
+/// One broadcast log line, in the device's own shape and passed through: whatever it
+/// writes to session 0 arrives here parsed and not reinterpreted. Today that is a
+/// single pre-formatted line — `I (1234) Tag: message` — because that is what the
+/// device already had to produce for its serial console, so nothing on either side
+/// has to agree about a structure neither of them has.
+///
+/// Every field is optional on purpose. A module reads what it recognises; a firmware
+/// that grows a richer broadcast does not break one that does not know about it.
+export interface DeviceLogLine {
+  readonly log?: string;
+  readonly [key: string]: unknown;
+}
+
+/// A page a module contributes to the shell's navigation, and the ONLY thing a module
+/// contributes. There used to be a second kind — a card, rendered into a home screen
+/// the shell owned — and it went when the shell stopped owning any device page at all.
+/// A shell adds nothing to a device's navigation, so there was nowhere left for a card
+/// to render; two extension points where one will do is worse than the convenience it
+/// bought.
+///
+/// The FIRST page a manifest declares is the landing page. A device's own product
+/// belongs on the screen you arrive at, so a firmware that has one main feature
+/// declares it first and that is the home screen — decided by the firmware, in
+/// declaration order, rather than by a shell picking a favourite.
 ///
 /// `id` must match an id the manifest declared for this module, and the shell is what
 /// checks it: a page registered but not declared is ignored (honouring it would make
@@ -73,12 +146,6 @@ export interface ModulePage {
   readonly render: () => unknown;
 }
 
-/// A card a module contributes to the shell's dashboard.
-export interface ModuleCard {
-  readonly id: string;
-  readonly render: () => unknown;
-}
-
 /// How a module tells the user something. Deliberately tiny: a module owns its own
 /// page's content, so the only thing it needs from the shell is the chrome it does
 /// not own.
@@ -88,18 +155,23 @@ export interface ShellUi {
 
 /// What `activate` is handed. The whole host surface, in one object.
 ///
-/// Note what is absent. There is no `subscribe`: the device has exactly two
-/// device-initiated sessions — session 0 (log broadcasts) and 0xFFFF (telemetry,
-/// addressed to the relay's database and never to a browser) — so there are no
-/// topics and no per-feature events for a subscription to carry. Modules poll. When
-/// Strux grows a real feature-event concept it is a new session concept plus a
-/// fan-out design, and it earns a `hostApi` bump; that is what the integer is for.
+/// Note what is absent, and what is not. There is still no `subscribe(topic)`: the
+/// device has exactly two device-initiated sessions — session 0 (log broadcasts) and
+/// 0xFFFF (telemetry, addressed to the relay's database and never to a browser) — so
+/// there are no topics and no per-feature events for a subscription to carry. Modules
+/// poll for feature state. `transport.logs` is the one exception and is named after
+/// the one thing it carries for exactly that reason: session 0 exists, so a Console
+/// module can have live lines without inventing a subscription framework whose only
+/// user would be logs. When Strux grows real per-feature events it is a new session
+/// concept plus a fan-out design, and it earns another `hostApi` bump.
+///
+/// There is also no `cards` any more. A shell owns no page under a device, so nothing
+/// hosted them.
 export interface ShellProvider {
   readonly hostApi: HostApiVersion;
   readonly device: DeviceIdentity;
   readonly transport: DeviceTransport;
   readonly routes: { register(page: ModulePage): void };
-  readonly cards: { register(card: ModuleCard): void };
   readonly ui: ShellUi;
 }
 
@@ -131,8 +203,6 @@ export interface ManifestModule {
   /// content-hashed, because the firmware has to be able to name its own entry.
   readonly entry: string;
   readonly pages: readonly ManifestPage[];
-  /// Dashboard card ids this module provides.
-  readonly cards: readonly string[];
 }
 
 export interface UiManifest {
@@ -142,4 +212,4 @@ export interface UiManifest {
 
 /// The host API version this copy of the contract describes. A shell compares its own
 /// against the manifest's range; a mismatch omits navigation and says why.
-export const HOST_API: HostApiVersion = 1;
+export const HOST_API: HostApiVersion = 2;

@@ -1,10 +1,4 @@
-import {
-  DownloadIcon,
-  HouseIcon,
-  RadioTowerIcon,
-  SettingsIcon,
-  TerminalIcon,
-} from "lucide-react"
+import { RadioTowerIcon } from "lucide-react"
 
 import {
   Sidebar,
@@ -26,24 +20,7 @@ import type { Device } from "@/hooks/use-devices"
 import type { Session } from "@/hooks/use-relay"
 import { navIcon, type DeviceNavItem } from "@/lib/device-nav"
 import type { ManifestStatus } from "@/shell/module-registry"
-import {
-  sameDevicePage,
-  type DevicePage,
-  type DeviceShellPage,
-} from "@/hooks/use-hash-route"
-
-/// This shell's own per-device pages. Components here rather than icon names,
-/// unlike the module nav: these are compiled in, so there is no wire format to
-/// survive and no indirection to earn its keep.
-const DEVICE_TOOLS: {
-  page: DeviceShellPage
-  label: string
-  icon: typeof TerminalIcon
-}[] = [
-  { page: "console", label: "Console", icon: TerminalIcon },
-  { page: "settings", label: "Settings", icon: SettingsIcon },
-  { page: "firmware", label: "Firmware", icon: DownloadIcon },
-]
+import { sameDevicePage, type DevicePage } from "@/hooks/use-hash-route"
 
 export function AppSidebar({
   session,
@@ -55,7 +32,6 @@ export function AppSidebar({
   navDetail,
   devicePage,
   onDevicePage,
-  onDeviceOverview,
 }: {
   session: Session | null
   /** Which relay page is showing, or null while a device page is. */
@@ -68,11 +44,9 @@ export function AppSidebar({
   /** Why the list above is empty, when it is. */
   navStatus: ManifestStatus
   navDetail: string
-  /** Which device page is showing, or null for the overview. */
+  /** Which device page is showing, or null while the manifest has not answered. */
   devicePage: DevicePage | null
   onDevicePage: (page: DevicePage) => void
-  /** The overview is this SHELL's page for a device, so it gets its own handler. */
-  onDeviceOverview: () => void
 }) {
   return (
     // "icon" rather than "offcanvas": collapsing narrows the rail to the icons
@@ -125,23 +99,11 @@ export function AppSidebar({
               <SidebarGroupContent className="flex flex-col gap-2">
                 <DeviceContext device={device} />
                 <SidebarMenu>
-                  {/* Overview belongs to this shell, not to the manifest — the same
-                      way Devices and Cache do. It shows the device's contributed
-                      CARDS, which is what most firmware declares and no page of its
-                      own: a product's main feature belongs on the screen you land
-                      on. So it is always first and always present, and the entries
-                      below it are whatever the firmware added beyond that. */}
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      isActive={devicePage === null}
-                      tooltip="Overview"
-                      onClick={onDeviceOverview}
-                    >
-                      <HouseIcon />
-                      <span>Overview</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-
+                  {/* Everything here comes from the manifest. There is no
+                      Overview, no Console, no Settings and no Firmware that this
+                      build put there — a shell contributes nothing to a device's
+                      navigation, so this list is exactly what the firmware declared
+                      and in the order it declared it. */}
                   {deviceNav.map((item) => {
                     const Icon = navIcon(item.icon)
                     return (
@@ -160,26 +122,6 @@ export function AppSidebar({
                       </SidebarMenuItem>
                     )
                   })}
-                </SidebarMenu>
-
-                {/* This shell's own pages for a device, below whatever the firmware
-                    contributed. Below, because the order says what belongs to whom:
-                    Overview and the module pages are this product; these two are the
-                    framework's — every Strux device has `log list` and
-                    `settings list`, which is exactly why they are not modules. */}
-                <SidebarMenu>
-                  {DEVICE_TOOLS.map(({ page, label, icon: Icon }) => (
-                    <SidebarMenuItem key={page}>
-                      <SidebarMenuButton
-                        isActive={sameDevicePage(devicePage, { kind: "shell", page })}
-                        tooltip={label}
-                        onClick={() => onDevicePage({ kind: "shell", page })}
-                      >
-                        <Icon />
-                        <span>{label}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
                 </SidebarMenu>
 
                 {/* Why the list above is empty, when it is — and only for the one

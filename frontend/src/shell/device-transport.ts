@@ -13,9 +13,24 @@
 // the device it is a WebSocket session, here it is `DeviceCommand`, and the module
 // cannot tell.
 
-import type { DeviceTransport } from "@shell/contract"
+import type { DeviceLogLine, DeviceTransport } from "@shell/contract"
 
 type Invoke = <T>(method: string, ...args: unknown[]) => Promise<T>
+type On = <T>(event: string, handler: (payload: T) => void) => () => void
+
+/// What this factory needs from the hub. A slice rather than the whole `Relay`, so it
+/// is obvious that a transport can call and can listen, and can do nothing else.
+export interface TransportHub {
+  invoke: Invoke
+  on: On
+}
+
+/// One "DeviceLog" push carries one line and says which device it came from — every
+/// subscriber sees every device's, so filtering is the reader's job.
+interface DeviceLogPush {
+  deviceId: string
+  line: string
+}
 
 /// What the hub's DeviceCommand answers. Failure is DATA, not a thrown exception —
 /// SignalR rewrites a thrown message ("An unexpected error occurred invoking … on the
@@ -36,7 +51,31 @@ type DeviceCommandResult = {
 /// transport closing over the old one would call into a dead connection.
 const cache = new WeakMap<object, Map<string, DeviceTransport>>()
 
-export function deviceTransport(invoke: Invoke, deviceId: string): DeviceTransport {
+/// `?command=led+get&partition=ota_1` — the command plus every argument, flat, which
+/// is the shape a device envelope has anyway. Values go as strings and the device's own
+/// ArgReader types them, because it is the only thing that knows a partition's or a
+/// setting's rules.
+function query(command: string, args?: Record<string, unknown>): string {
+  const params = new URLSearchParams({ command })
+  for (const [key, value] of Object.entries(args ?? {}))
+    if (key !== "command" && value !== undefined && value !== null)
+      params.set(key, String(value))
+  return `?${params}`
+}
+
+/// The relay answers a device-side failure as ProblemDetails, so its `detail` is the
+/// DEVICE's own reason — which is what the contract promises a module.
+function problemDetail(request: XMLHttpRequest): string {
+  try {
+    return JSON.parse(request.responseText)?.detail ?? `HTTP ${request.status}`
+  } catch {
+    return `HTTP ${request.status}`
+  }
+}
+
+export function deviceTransport(hub: TransportHub, deviceId: string): DeviceTransport {
+  const { invoke, on } = hub
+
   let perDevice = cache.get(invoke)
   if (!perDevice) {
     perDevice = new Map()
@@ -75,6 +114,104 @@ export function deviceTransport(invoke: Invoke, deviceId: string): DeviceTranspo
       if (!result.reply) return undefined as T
 
       return JSON.parse(result.reply) as T
+    },
+
+    async upload<T = unknown>(
+      command: string,
+      args: Record<string, unknown> | undefined,
+      body: Blob,
+      onProgress?: (fraction: number) => void,
+    ): Promise<T> {
+      // HTTP, not the hub, because this is a BODY: through the hub's JSON protocol
+      // the image would travel as base64 — a third larger and buffered as strings —
+      // where a request body is a stream the relay hands to the pipe 4 KB at a time.
+      //
+      // XHR rather than fetch for exactly one reason: fetch still has no upload
+      // progress event. Everything else about it would be nicer.
+      const url =
+        `/devices/${encodeURIComponent(deviceId)}/upload` + query(command, args)
+
+      return new Promise<T>((resolve, reject) => {
+        const request = new XMLHttpRequest()
+        request.open("POST", url)
+        request.setRequestHeader("Content-Type", "application/octet-stream")
+
+        // Bytes accepted by the RELAY, which is not the device's write position — the
+        // contract says as much. It tracks closely because the relay forwards chunk by
+        // chunk while awaiting the socket, and lags at the tail while the device
+        // finishes writing.
+        request.upload.onprogress = (event) => {
+          if (event.lengthComputable) onProgress?.(event.loaded / event.total)
+        }
+
+        request.onload = () => {
+          if (request.status < 200 || request.status >= 300)
+            return reject(new Error(problemDetail(request)))
+          onProgress?.(1)
+          try {
+            resolve(request.responseText ? JSON.parse(request.responseText) : (undefined as T))
+          } catch (error) {
+            reject(error instanceof Error ? error : new Error(String(error)))
+          }
+        }
+        request.onerror = () => reject(new Error("the upload could not reach the relay"))
+        request.send(body)
+      })
+    },
+
+    async download(
+      command: string,
+      args?: Record<string, unknown>,
+      total?: number,
+      onProgress?: (fraction: number) => void,
+    ): Promise<Blob> {
+      const url =
+        `/devices/${encodeURIComponent(deviceId)}/download` + query(command, args)
+
+      return new Promise<Blob>((resolve, reject) => {
+        const request = new XMLHttpRequest()
+        request.open("GET", url)
+        request.responseType = "blob"
+        request.onprogress = (event) => {
+          // The relay buffers the whole reply before answering, so Content-Length is
+          // known and `total` is only needed when it is not.
+          const size = event.lengthComputable ? event.total : total
+          if (size) onProgress?.(Math.min(1, event.loaded / size))
+        }
+        request.onload = () => {
+          if (request.status < 200 || request.status >= 300)
+            return reject(new Error(`HTTP ${request.status}`))
+          onProgress?.(1)
+          resolve(request.response as Blob)
+        }
+        request.onerror = () => reject(new Error("the download could not reach the relay"))
+        request.send()
+      })
+    },
+
+    logs(handler: (line: DeviceLogLine) => void): () => void {
+      // The relay pushes "DeviceLog" to a per-device group; subscribing is a hub call.
+      // A module cannot tell this apart from the device shell's direct read of session
+      // 0, which is the point.
+      const stop = on<DeviceLogPush>("DeviceLog", (push) => {
+        if (push?.deviceId !== deviceId) return
+        try {
+          handler(JSON.parse(push.line))
+        } catch {
+          // Not JSON. Passed on as a bare line rather than dropped: the device wrote
+          // something, and a console that hides what it cannot parse is worse than one
+          // that shows it.
+          handler({ log: push.line })
+        }
+      })
+      void invoke("SubscribeDeviceLogs", deviceId).catch(() => {
+        // The topbar already says when the hub is down; a module does not need to be
+        // told twice, and it has no useful response to it either.
+      })
+      return () => {
+        stop()
+        void invoke("UnsubscribeDeviceLogs", deviceId).catch(() => {})
+      }
     },
   }
 

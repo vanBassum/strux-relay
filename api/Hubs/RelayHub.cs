@@ -42,6 +42,13 @@ internal sealed class RelayHub(
     /// </summary>
     public const string TelemetryGroup = "telemetry";
 
+    /// <summary>
+    /// Who is watching one device's log. A group PER DEVICE, because a dashboard with
+    /// twenty devices connected has no use for nineteen other logs, and session-0
+    /// traffic is per device anyway.
+    /// </summary>
+    public static string LogGroup(string deviceId) => $"logs:{deviceId}";
+
     private static readonly string Version =
         Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
 
@@ -163,6 +170,21 @@ internal sealed class RelayHub(
         await AnnounceCacheAsync();
         return new CacheActionResult(true, null, dropped);
     }
+
+    /// <summary>
+    /// Start receiving "DeviceLog" pushes for one device: every line it broadcasts on
+    /// session 0, from now on.
+    ///
+    /// Nothing is replayed, and there is nothing here to replay — the relay keeps no
+    /// log history. A module that wants what came before it subscribed asks the DEVICE
+    /// for its ring buffer with `log list`, which is exactly the split the console
+    /// module makes.
+    /// </summary>
+    public Task SubscribeDeviceLogs(string deviceId) =>
+        Groups.AddToGroupAsync(Context.ConnectionId, LogGroup(deviceId));
+
+    public Task UnsubscribeDeviceLogs(string deviceId) =>
+        Groups.RemoveFromGroupAsync(Context.ConnectionId, LogGroup(deviceId));
 
     // ── device UI modules ──────────────────────────────────────────────────
 

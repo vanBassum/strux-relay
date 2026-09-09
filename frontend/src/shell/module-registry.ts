@@ -16,7 +16,7 @@
 //
 // Nothing here imports a module or knows a module's shape. It holds ids and thunks.
 
-import type { ManifestModule, ModuleCard, ModulePage, UiManifest } from "@shell/contract"
+import type { ManifestModule, ModulePage, UiManifest } from "@shell/contract"
 
 /// Where the shell is in the process of learning what a device offers.
 ///
@@ -46,7 +46,6 @@ export class DeviceModules {
   readonly failed = new Map<string, string>()
   readonly activated = new Set<string>()
   readonly pages = new Map<string, ModulePage>()
-  readonly cards = new Map<string, ModuleCard>()
 
   /// One import per module, deduplicated so a card and a page from the same bundle do
   /// not fetch it twice. On this store rather than in module scope: the URL is
@@ -107,15 +106,6 @@ export class DeviceModules {
     this.changed()
   }
 
-  registerCard(card: ModuleCard) {
-    if (this.cards.has(card.id))
-      console.warn(
-        `[modules] ${this.deviceId}: card "${card.id}" registered twice; last one wins`,
-      )
-    this.cards.set(card.id, card)
-    this.changed()
-  }
-
   markActivated(moduleId: string) {
     this.activated.add(moduleId)
     this.changed()
@@ -140,13 +130,6 @@ export class DeviceModules {
         title: page.title,
         icon: page.icon,
       })),
-    )
-  }
-
-  declaredCardIds(): { moduleId: string; id: string }[] {
-    if (!this.manifest) return []
-    return this.manifest.modules.flatMap((mod) =>
-      mod.cards.map((id) => ({ moduleId: mod.id, id })),
     )
   }
 

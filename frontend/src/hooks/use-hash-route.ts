@@ -18,29 +18,17 @@ import { RELAY_PAGES, type RelayPage } from "@/components/app/navigation"
  * has to survive a refresh, be linkable, and answer the back button — none of which
  * component state can do.
  */
-/// Which page of a device is showing.
+/// Which page of a device is showing: a page its firmware declared, by id.
 ///
-/// A union rather than one string, because the two halves come from different places
-/// and can collide: `console` and `settings` are THIS shell's pages for any device,
-/// while a module page id comes from firmware, which could perfectly reasonably
-/// declare a page called "settings". So a module page is addressed under `module/`,
-/// the same separation Strux's own shell makes with `#/module/<id>`.
+/// This was briefly a union — `console` and `settings` were pages the SHELL provided
+/// for any device, alongside module pages and addressed under `module/` to keep the id
+/// spaces apart. Both are modules now, so there is one kind again and no separate id
+/// space to protect: **this shell contributes nothing to a device's navigation.**
 ///
-/// `null` is the overview — the device's contributed cards — which is the landing page
-/// and needs no name in the URL.
-export type DevicePage =
-  | { kind: "shell"; page: DeviceShellPage }
-  | { kind: "module"; id: string }
-
-/// Pages this shell provides for every device, whatever its firmware contributes.
-/// They are framework features — `settings list` and `log list` exist on every Strux
-/// device and describe themselves — so they are not modules and never will be.
-export const DEVICE_SHELL_PAGES = ["console", "settings", "firmware"] as const
-export type DeviceShellPage = (typeof DEVICE_SHELL_PAGES)[number]
-
-function isDeviceShellPage(value: string): value is DeviceShellPage {
-  return (DEVICE_SHELL_PAGES as readonly string[]).includes(value)
-}
+/// `null` is "no page named", which is not a default. There is no page this build can
+/// name; until the manifest arrives there is nowhere to be, and once it has arrived the
+/// first page it declares is where we go.
+export type DevicePage = { kind: "module"; id: string }
 
 export type Route =
   | { kind: "relay"; page: RelayPage }
@@ -50,10 +38,7 @@ export const HOME: Route = { kind: "relay", page: "devices" }
 
 export function sameDevicePage(a: DevicePage | null, b: DevicePage | null): boolean {
   if (a === null || b === null) return a === b
-  if (a.kind !== b.kind) return false
-  return a.kind === "module" && b.kind === "module"
-    ? a.id === b.id
-    : a.kind === "shell" && b.kind === "shell" && a.page === b.page
+  return a.id === b.id
 }
 
 const RELAY_IDS = new Set<string>(RELAY_PAGES.map((page) => page.id))
@@ -64,10 +49,9 @@ const RELAY_IDS = new Set<string>(RELAY_PAGES.map((page) => page.id))
 export function routeHash(route: Route): string {
   if (route.kind === "relay") return `#/${route.page}`
   const id = encodeURIComponent(route.deviceId)
-  if (!route.page) return `#/devices/${id}`
-  return route.page.kind === "module"
-    ? `#/devices/${id}/module/${encodeURIComponent(route.page.id)}`
-    : `#/devices/${id}/${route.page.page}`
+  return route.page
+    ? `#/devices/${id}/${encodeURIComponent(route.page.id)}`
+    : `#/devices/${id}`
 }
 
 function parse(hash: string): Route {
@@ -81,19 +65,12 @@ function parse(hash: string): Route {
 
   if (parts[0] === "devices" && parts[1]) {
     const deviceId = parts[1]
-    if (!parts[2]) return { kind: "device", deviceId, page: null }
-    if (parts[2] === "module")
-      // Not validated against the manifest here: the manifest arrives over the wire,
-      // after the first render, and a route that waited for it would flash the
-      // overview on every reload of a module page. DevicePage resolves the id and
-      // reports an unknown one.
-      return parts[3]
-        ? { kind: "device", deviceId, page: { kind: "module", id: parts[3] } }
-        : { kind: "device", deviceId, page: null }
-    if (isDeviceShellPage(parts[2]))
-      return { kind: "device", deviceId, page: { kind: "shell", page: parts[2] } }
-    // An unknown page falls back to the overview, which always exists.
-    return { kind: "device", deviceId, page: null }
+    // Not validated against the manifest here: it arrives over the wire, after the
+    // first render, and a route that waited for it would flash a different page on
+    // every reload. App resolves the id, and DevicePage reports an unknown one.
+    return parts[2]
+      ? { kind: "device", deviceId, page: { kind: "module", id: parts[2] } }
+      : { kind: "device", deviceId, page: null }
   }
 
   // An unknown relay page lands on Devices rather than on an error screen: a stale

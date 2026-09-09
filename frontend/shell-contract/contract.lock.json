@@ -2,8 +2,8 @@
   "$comment": "Where the vendored contract.ts came from. Checked by scripts/check-contract.mjs; see shell-contract/README.md.",
   "repo": "vanBassum/Strux",
   "path": "frontend/shell-contract/contract.ts",
-  "commit": "f690264e2b4233ee60aec9cc4888e9a989c91b21",
-  "sha256": "89803e81f9834c83d868f432a136bce717acf857d3f4431b73cc5cb644098ce6",
-  "hostApi": 1,
+  "commit": "d775efc6eb39d7884a21bc9edaf70500f868d111",
+  "sha256": "2ce7c7e2a19d31979158a4d996899ee03b1e42074657ff8dacbd91c363baa9ac",
+  "hostApi": 2,
   "vendoredAt": "2026-09-09"
 }

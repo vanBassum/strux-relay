@@ -29,7 +29,7 @@ import {
 
 import type { Device } from "@/hooks/use-devices"
 import { useRelayContext } from "@/hooks/use-relay"
-import { deviceTransport } from "@/shell/device-transport"
+import { deviceTransport, type TransportHub } from "@/shell/device-transport"
 import {
   forDevice,
   forget,
@@ -190,14 +190,14 @@ function buildShell(
   store: DeviceModules,
   mod: ManifestModule,
   device: Device,
-  invoke: <T>(method: string, ...args: unknown[]) => Promise<T>,
+  hub: TransportHub,
 ): ShellProvider {
   const label = device.name || device.deviceId
 
   return {
     hostApi: HOST_API,
     device: { id: device.deviceId, name: label },
-    transport: deviceTransport(invoke, device.deviceId),
+    transport: deviceTransport(hub, device.deviceId),
     routes: {
       register(page) {
         // Registered but not declared is ignored, because honouring it would make
@@ -211,18 +211,6 @@ function buildShell(
           return
         }
         store.registerPage(page)
-      },
-    },
-    cards: {
-      register(card) {
-        if (!mod.cards.includes(card.id)) {
-          console.warn(
-            `[modules] ${device.deviceId}: "${mod.id}" registered card "${card.id}", ` +
-              "which its manifest does not declare — ignored",
-          )
-          return
-        }
-        store.registerCard(card)
       },
     },
     ui: {
@@ -242,7 +230,7 @@ function activate(
   store: DeviceModules,
   mod: ManifestModule,
   device: Device,
-  invoke: <T>(method: string, ...args: unknown[]) => Promise<T>,
+  hub: TransportHub,
 ): Promise<void> {
   const existing = store.inFlight.get(mod.id)
   if (existing) return existing
@@ -255,7 +243,7 @@ function activate(
     }
     if (typeof bundle.activate !== "function")
       throw new Error(`${mod.entry} has no activate() export`)
-    bundle.activate(buildShell(store, mod, device, invoke))
+    bundle.activate(buildShell(store, mod, device, hub))
     store.markActivated(mod.id)
   })().catch((error) => {
     store.markFailed(mod.id, errorMessage(error))
@@ -267,39 +255,16 @@ function activate(
   return started
 }
 
-// ── Rendering a device's cards ────────────────────────────────────────────────
+// ── Where to land ────────────────────────────────────────────────────────────
 
-/// Import and activate every module that contributes a card, and hand back what they
-/// registered.
+/// The page to open when none is named: the first one this device's manifest declares.
 ///
-/// Cards are EAGER where pages are lazy, and for the same reason in both shells: the
-/// cards are the landing view, so waiting for a click would mean the first thing you
-/// see is empty. It costs one bundle fetch per card-bearing module — off the relay's
-/// file cache after the first warm, so usually not a pipe round trip at all.
-export function useDeviceCards(device: Device | null): {
-  moduleId: string
-  id: string
-  render?: () => unknown
-  failure?: string
-}[] {
-  const { invoke } = useRelayContext()
+/// Declaration ORDER decides it, so the firmware chooses. A product's main feature is
+/// declared first and is therefore where you arrive — this shell has no page of its
+/// own to fall back to, which is the point.
+export function useLandingPage(device: Device | null): string | null {
   const store = useStore(forDevice(device?.deviceId ?? ""))
-  const manifest = store.manifest
-
-  useEffect(() => {
-    if (!device || !manifest) return
-    for (const mod of manifest.modules) {
-      if (mod.cards.length === 0) continue
-      if (store.activated.has(mod.id) || store.failed.has(mod.id)) continue
-      void activate(store, mod, device, invoke)
-    }
-  }, [store, manifest, device, invoke])
-
-  return store.declaredCardIds().map((card) => ({
-    ...card,
-    render: store.cards.get(card.id)?.render,
-    failure: store.failed.get(card.moduleId),
-  }))
+  return store.declaredPages()[0]?.id ?? null
 }
 
 // ── Rendering one page ────────────────────────────────────────────────────────
@@ -312,15 +277,15 @@ export function ModulePageView({
   device: Device
   pageId: string
 }) {
-  const { invoke } = useRelayContext()
+  const hub = useRelayContext()
   const store = useStore(forDevice(device.deviceId))
   const mod = store.findDeclaringModule(pageId)
 
   const start = useCallback(() => {
     if (!mod) return
     if (store.activated.has(mod.id) || store.failed.has(mod.id)) return
-    void activate(store, mod, device, invoke)
-  }, [store, mod, device, invoke])
+    void activate(store, mod, device, hub)
+  }, [store, mod, device, hub])
 
   useEffect(() => {
     start()

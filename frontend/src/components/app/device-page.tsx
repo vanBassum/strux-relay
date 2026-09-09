@@ -1,15 +1,11 @@
-import type { ReactNode } from "react"
 import { ExternalLinkIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import type { Device } from "@/hooks/use-devices"
 import { deviceUiUrl } from "@/lib/device-url"
 import type { ManifestStatus } from "@/shell/module-registry"
-import { ModulePageView, useDeviceCards } from "@/shell/module-host"
+import { ModulePageView } from "@/shell/module-host"
 import type { DevicePage as DevicePageRoute } from "@/hooks/use-hash-route"
-import { DeviceConsolePage } from "@/components/app/device-console-page"
-import { DeviceSettingsPage } from "@/components/app/device-settings-page"
-import { DeviceFirmwarePage } from "@/components/app/device-firmware-page"
 
 /**
  * One device, in this shell.
@@ -43,22 +39,13 @@ export function DevicePage({
   status: ManifestStatus
   detail: string
 }) {
-  if (page?.kind === "module")
-    return <ModulePageView device={device} pageId={page.id} />
-
-  if (page?.kind === "shell") {
-    // Framework pages, not modules: every Strux device has `log list`,
-    // `settings list` and `partition list`, and all three describe themselves.
-    if (page.page === "console") return <DeviceConsolePage device={device} />
-    if (page.page === "settings") return <DeviceSettingsPage device={device} />
-    return <DeviceFirmwarePage device={device} />
-  }
-
-  return <DeviceOverview device={device} status={status} detail={detail} />
+  if (page) return <ModulePageView device={device} pageId={page.id} />
+  return <NoPages device={device} status={status} detail={detail} />
 }
 
-/// The device's own cards, or an honest account of why there are none.
-function DeviceOverview({
+/// Why this device has no page to show. There is no overview to fall back to: every
+/// page is the firmware's, so a device that declares none has none.
+function NoPages({
   device,
   status,
   detail,
@@ -67,30 +54,6 @@ function DeviceOverview({
   status: ManifestStatus
   detail: string
 }) {
-  const cards = useDeviceCards(device)
-
-  if (cards.length > 0)
-    return (
-      <div className="p-4">
-        <div className="mx-auto max-w-2xl space-y-6">
-          {cards.map((card) => (
-            <div key={`${card.moduleId}/${card.id}`}>
-              {card.render ? (
-                (card.render() as ReactNode)
-              ) : (
-                <div className="bg-card text-card-foreground rounded-xl border p-6 text-sm shadow-sm">
-                  <span className="font-mono">{card.moduleId}</span>{" "}
-                  {card.failure
-                    ? `could not be loaded: ${card.failure}`
-                    : `declared a card "${card.id}" that its bundle did not register.`}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-    )
-
   return (
     <div className="flex flex-col items-start gap-3 p-4">
       <h2 className="text-sm font-medium">{headline(status)}</h2>
@@ -151,8 +114,8 @@ function headline(status: ManifestStatus): string {
     case "error":
       return "Could not read this device's UI manifest"
     case "ready":
-      // A manifest that declares neither a card nor a page. Legal, and not worth an
-      // apology: the firmware registered a UiModule and nothing in it.
-      return "This device contributes no UI to the relay"
+      // A manifest with no pages in it. Legal, and not worth an apology: the firmware
+      // answered, and what it said was "nothing".
+      return "This device contributes no pages"
   }
 }

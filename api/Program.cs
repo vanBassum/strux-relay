@@ -105,65 +105,104 @@ app.MapGet("/devices/{deviceId}/ws", (
         ILoggerFactory loggers) =>
     BrowserPipe.HandleAsync(context, deviceId, registry, loggers));
 
-// A firmware image, streamed into one of a device's partitions.
+// The two streamed shapes a module can ask for: a command with a body, and a command
+// whose reply is a body. `partition write` and `partition read` are why they exist.
 //
-// HTTP and not the hub, and for once not because a browser needs a URL: an upload
-// is a REQUEST BODY. The hub's JSON protocol would carry 1.2 MB of image as
-// base64 — a third more bytes, all of it buffered as strings — while
-// `Request.Body` is a stream the relay can read 4 KB at a time and hand straight
-// to the device. It is a POST rather than a GET for the same reason every other
-// route here is a GET: this one changes something.
+// HTTP and not the hub, and not because a browser needs a URL: these are BODIES. The
+// hub's JSON protocol would carry a 1.2 MB image as base64 — a third more bytes, all
+// of it buffered as strings — where `Request.Body` and the response stream are things
+// the relay can move 4 KB at a time. Everything else a module does is a hub call.
 //
-// Registered BEFORE the catch-all below it, which would otherwise match
-// /devices/{id}/partition/{label} and go looking for a file by that name.
-app.MapPost("/devices/{deviceId}/partition/{label}", async (
+// Generic on purpose: the relay names no command and knows nothing about partitions.
+// `command` is the route the device dispatches on and every OTHER query parameter is
+// an argument, which works because a device envelope is flat (`{type, ...args}`).
+// Values arrive as strings; the device's own ArgReader is what types them, and it is
+// the only thing that knows a setting's or a partition's rules.
+//
+// Registered BEFORE the file catch-all below, which would otherwise match these and go
+// looking for a file called "upload".
+static Dictionary<string, JsonElement> ArgsFromQuery(HttpContext context) =>
+    context.Request.Query
+        .Where(pair => pair.Key != "command")
+        .ToDictionary(
+            pair => pair.Key,
+            pair => JsonSerializer.SerializeToElement(pair.Value.ToString()));
+
+app.MapPost("/devices/{deviceId}/upload", async (
         HttpContext context,
         string deviceId,
-        string label,
+        string? command,
         DeviceRegistry registry,
         ILoggerFactory loggers) =>
 {
     var device = registry.Find(deviceId);
     if (device is null || !device.Online)
         return Results.Problem($"device '{deviceId}' is not connected", statusCode: 503);
+    if (string.IsNullOrWhiteSpace(command))
+        return Results.Problem("no command given", statusCode: 400);
 
-    // Default true: an app slot is useless until it is the boot slot, so the common
-    // case should not need saying. A data partition passes activate=false, because
-    // `partition activate` validates an app image and would fail on one.
-    var activate = context.Request.Query["activate"] != "0";
-
-    var logger = loggers.CreateLogger("StruxRelay.Firmware");
+    var logger = loggers.CreateLogger("StruxRelay.Sessions");
     try
     {
-        var written = await device.PartitionUploadAsync(
-            label,
+        var reply = await device.UploadSessionAsync(
+            command,
+            ArgsFromQuery(context),
             context.Request.Body,
-            activate,
-            // Logged rather than pushed anywhere: the browser already has its own
-            // upload progress, and a second channel to report the device's write
-            // position would need a hub group per upload. Worth having in the log
-            // when somebody asks why a flash took two minutes.
+            // Logged rather than pushed anywhere: the browser has its own upload
+            // progress, and a second channel for the device's write position would
+            // need a hub group per upload. Worth having in the log when somebody asks
+            // why a flash took two minutes.
             progress: null,
             context.RequestAborted);
 
         logger.LogInformation(
-            "firmware: wrote {Bytes} bytes to {Label} on {DeviceId}{Activated}",
-            written, label, deviceId, activate ? " and activated it" : "");
-
-        return Results.Json(new { ok = true, size = written, activated = activate });
+            "session: '{Command}' on {DeviceId} accepted a body", command, deviceId);
+        // The device's own reply, passed through. Whether `{"ok":false}` means failure
+        // is the module's business — the relay does not read command payloads.
+        return Results.Text(reply, "application/json");
     }
     catch (OperationCanceledException)
     {
-        // The browser gave up mid-upload. The device is left with an erased slot,
-        // which is exactly the state it would be in after any failed upload: the
-        // OLD slot still boots, so nothing is bricked.
-        logger.LogInformation("firmware: upload of {Label} to {DeviceId} was cancelled", label, deviceId);
+        // The browser gave up mid-upload. Whatever the device had written stays
+        // written, which is the same state any failed upload leaves.
         return Results.Empty;
     }
     catch (RelayException exception)
     {
         logger.LogWarning(
-            "firmware: {Label} on {DeviceId} failed: {Message}", label, deviceId, exception.Message);
+            "session: '{Command}' on {DeviceId} failed: {Message}",
+            command, deviceId, exception.Message);
+        return Results.Problem(exception.Message, statusCode: 502);
+    }
+});
+
+app.MapGet("/devices/{deviceId}/download", async (
+        HttpContext context,
+        string deviceId,
+        string? command,
+        DeviceRegistry registry) =>
+{
+    var device = registry.Find(deviceId);
+    if (device is null || !device.Online)
+        return Results.Problem($"device '{deviceId}' is not connected", statusCode: 503);
+    if (string.IsNullOrWhiteSpace(command))
+        return Results.Problem("no command given", statusCode: 400);
+
+    try
+    {
+        var bytes = await device.DownloadSessionAsync(
+            command, ArgsFromQuery(context), context.RequestAborted);
+        // octet-stream whatever it is: the relay does not know, and a device that
+        // streamed a short JSON error instead of bytes is something the MODULE has to
+        // notice — it is the only side that knows how big the answer should be.
+        return Results.Bytes(bytes, "application/octet-stream");
+    }
+    catch (OperationCanceledException)
+    {
+        return Results.Empty;
+    }
+    catch (RelayException exception)
+    {
         return Results.Problem(exception.Message, statusCode: 502);
     }
 });

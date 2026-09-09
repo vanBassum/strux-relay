@@ -19,7 +19,7 @@ import {
 } from "@/hooks/use-hash-route"
 import { useDevices } from "@/hooks/use-devices"
 import { RelayProvider, useRelay, useRelayContext } from "@/hooks/use-relay"
-import { useDeviceModules } from "@/shell/module-host"
+import { useDeviceModules, useLandingPage } from "@/shell/module-host"
 
 /** Split from App so everything below it can reach the hub through the context. */
 function Workspace() {
@@ -69,15 +69,26 @@ function Workspace() {
       ? (modules.nav.find((item) => item.id === devicePage.id) ?? null)
       : null
 
-  // A module id this device does not have gets corrected to the overview. `replace`,
-  // not `navigate`: the user did not ask for this step, and it would otherwise sit in
-  // the back stack redirecting forward again. Only once the manifest has actually
-  // answered — before that, "not found" only means "not yet".
+  // Where to be when no page is named, or when the one named is not a page this
+  // device has: the FIRST page its manifest declares. There is no overview to fall
+  // back to any more — every page is the firmware's — so the firmware's own
+  // declaration order is what decides, and this shell picks nothing.
+  //
+  // `replace`, not `navigate`: the user did not ask for this step, and it would
+  // otherwise sit in the back stack redirecting forward again. Only once the manifest
+  // has actually answered — before that, "not a page" only means "not yet".
+  const landing = useLandingPage(selected)
+
   useEffect(() => {
     if (route.kind !== "device" || modules.status === "loading") return
-    if (!route.page || sameDevicePage(route.page, devicePage)) return
-    replace({ kind: "device", deviceId: route.deviceId, page: null })
-  }, [route, devicePage, modules.status, replace])
+    if (route.page && sameDevicePage(route.page, devicePage)) return
+    if (!landing) return
+    replace({
+      kind: "device",
+      deviceId: route.deviceId,
+      page: { kind: "module", id: landing },
+    })
+  }, [route, devicePage, landing, modules.status, replace])
 
   // A device route whose device the relay has never heard of. Only once the list has
   // actually loaded — before that, "not found" just means "not yet".
@@ -105,10 +116,6 @@ function Workspace() {
         devicePage={onDevice ? devicePage : null}
         onDevicePage={(page) =>
           selected && navigate({ kind: "device", deviceId: selected.deviceId, page })
-        }
-        onDeviceOverview={() =>
-          selected &&
-          navigate({ kind: "device", deviceId: selected.deviceId, page: null })
         }
       />
       {/* min-h-0 so the page gives up room to the bar pinned above it, rather than
@@ -166,11 +173,12 @@ function Workspace() {
   )
 }
 
-/// What the breadcrumb calls the current device page.
+/// What the breadcrumb calls the current device page. The manifest's own title when
+/// the module is known, its id when the nav has not arrived yet, and "…" when there is
+/// no page at all — never a name this build invented.
 function crumbFor(page: DevicePageRoute | null, moduleLabel?: string): string {
-  if (!page) return "Overview"
-  if (page.kind === "module") return moduleLabel ?? page.id
-  return page.page.charAt(0).toUpperCase() + page.page.slice(1)
+  if (!page) return "…"
+  return moduleLabel ?? page.id
 }
 
 export function App() {
