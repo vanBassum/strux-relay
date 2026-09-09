@@ -383,6 +383,8 @@ function DeviceRow({
             <Button
               size="sm"
               variant="outline"
+              // See device-page.tsx: an anchor, not a button.
+              nativeButton={false}
               render={
                 <a
                   href={deviceUiUrl(device.deviceId)}

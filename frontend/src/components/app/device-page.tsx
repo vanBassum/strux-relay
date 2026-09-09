@@ -103,6 +103,9 @@ function DeviceOverview({
           <Button
             variant="outline"
             size="sm"
+            // Base UI assumes a native <button> unless told otherwise, and this one is
+            // a link: without it the primitive applies button semantics to an anchor.
+            nativeButton={false}
             render={
               <a href={deviceUiUrl(device.deviceId)} target="_blank" rel="noreferrer" />
             }
