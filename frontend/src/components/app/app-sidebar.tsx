@@ -1,4 +1,4 @@
-import { ExternalLinkIcon, RadioTowerIcon } from "lucide-react"
+import { ExternalLinkIcon, HouseIcon, RadioTowerIcon } from "lucide-react"
 
 import {
   Sidebar,
@@ -32,6 +32,7 @@ export function AppSidebar({
   navDetail,
   devicePage,
   onDevicePage,
+  onDeviceOverview,
 }: {
   session: Session | null
   /** Which relay page is showing, or null while a device page is. */
@@ -44,8 +45,11 @@ export function AppSidebar({
   /** Why the list above is empty, when it is. */
   navStatus: ManifestStatus
   navDetail: string
+  /** A module page, or null when the device's overview is showing. */
   devicePage: string | null
   onDevicePage: (page: string) => void
+  /** The overview is this SHELL's page for a device, so it gets its own handler. */
+  onDeviceOverview: () => void
 }) {
   return (
     // "icon" rather than "offcanvas": collapsing narrows the rail to the icons
@@ -98,6 +102,23 @@ export function AppSidebar({
               <SidebarGroupContent className="flex flex-col gap-2">
                 <DeviceContext device={device} />
                 <SidebarMenu>
+                  {/* Overview belongs to this shell, not to the manifest — the same
+                      way Devices and Cache do. It shows the device's contributed
+                      CARDS, which is what most firmware declares and no page of its
+                      own: a product's main feature belongs on the screen you land
+                      on. So it is always first and always present, and the entries
+                      below it are whatever the firmware added beyond that. */}
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      isActive={devicePage === null}
+                      tooltip="Overview"
+                      onClick={onDeviceOverview}
+                    >
+                      <HouseIcon />
+                      <span>Overview</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+
                   {deviceNav.map((item) => {
                     const Icon = navIcon(item.icon)
                     return (

@@ -50,21 +50,23 @@ function Workspace() {
   // The requested page may not be one this device offers — with nav coming from a
   // manifest that is the normal case, not an edge one, because two devices offer
   // different pages and a bookmark outlives a reflash. So it is validated against the
-  // manifest rather than trusted.
+  // manifest rather than trusted, and anything unrecognised falls back to the
+  // overview, which is this shell's own page and always exists.
   const requested = route.kind === "device" ? route.page : null
   const devicePage = selected
-    ? (modules.nav.find((item) => item.id === requested)?.id ?? modules.nav[0]?.id ?? null)
+    ? (modules.nav.find((item) => item.id === requested)?.id ?? null)
     : null
   const activeItem = modules.nav.find((item) => item.id === devicePage) ?? null
 
-  // Canonicalise the URL once the manifest has answered, so `#/devices/x` becomes
-  // `#/devices/x/<first page>` and a stale page id is corrected. `replace`, not
-  // `navigate`: the user did not ask for this step, and it would otherwise sit in the
-  // back stack redirecting forward again.
+  // A page id in the URL that this device does not have gets corrected to the
+  // overview. `replace`, not `navigate`: the user did not ask for this step, and it
+  // would otherwise sit in the back stack redirecting forward again. Only once the
+  // manifest has actually answered — before that "not found" only means "not yet".
   useEffect(() => {
-    if (route.kind !== "device" || !devicePage || route.page === devicePage) return
-    replace({ kind: "device", deviceId: route.deviceId, page: devicePage })
-  }, [route, devicePage, replace])
+    if (route.kind !== "device" || modules.status === "loading") return
+    if (!route.page || devicePage === route.page) return
+    replace({ kind: "device", deviceId: route.deviceId, page: null })
+  }, [route, devicePage, modules.status, replace])
 
   // A device route whose device the relay has never heard of. Only once the list has
   // actually loaded — before that, "not found" just means "not yet".
@@ -93,6 +95,10 @@ function Workspace() {
         onDevicePage={(page) =>
           selected && navigate({ kind: "device", deviceId: selected.deviceId, page })
         }
+        onDeviceOverview={() =>
+          selected &&
+          navigate({ kind: "device", deviceId: selected.deviceId, page: null })
+        }
       />
       {/* min-h-0 so the page gives up room to the bar pinned above it, rather than
           growing and pushing it off the top of the window. */}
@@ -104,8 +110,16 @@ function Workspace() {
             onDevice
               ? [
                   { label: "Devices", onClick: () => navigate(HOME) },
-                  { label: selected.name || selected.deviceId },
-                  ...(activeItem ? [{ label: activeItem.label }] : []),
+                  {
+                    label: selected.name || selected.deviceId,
+                    onClick: () =>
+                      navigate({
+                        kind: "device",
+                        deviceId: selected.deviceId,
+                        page: null,
+                      }),
+                  },
+                  { label: activeItem ? activeItem.label : "Overview" },
                 ]
               : [
                   {

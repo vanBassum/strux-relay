@@ -215,9 +215,6 @@ function buildShell(
           )
           return
         }
-        // Recorded but not rendered: this shell has no per-device dashboard for a
-        // card to sit on, so it keeps them rather than dropping them and refusing
-        // them would be a lie about the contract. The device's own shell renders them.
         store.registerCard(card)
       },
     },
@@ -261,6 +258,41 @@ function activate(
 
   store.inFlight.set(mod.id, started)
   return started
+}
+
+// ── Rendering a device's cards ────────────────────────────────────────────────
+
+/// Import and activate every module that contributes a card, and hand back what they
+/// registered.
+///
+/// Cards are EAGER where pages are lazy, and for the same reason in both shells: the
+/// cards are the landing view, so waiting for a click would mean the first thing you
+/// see is empty. It costs one bundle fetch per card-bearing module — off the relay's
+/// file cache after the first warm, so usually not a pipe round trip at all.
+export function useDeviceCards(device: Device | null): {
+  moduleId: string
+  id: string
+  render?: () => unknown
+  failure?: string
+}[] {
+  const { invoke } = useRelayContext()
+  const store = useStore(forDevice(device?.deviceId ?? ""))
+  const manifest = store.manifest
+
+  useEffect(() => {
+    if (!device || !manifest) return
+    for (const mod of manifest.modules) {
+      if (mod.cards.length === 0) continue
+      if (store.activated.has(mod.id) || store.failed.has(mod.id)) continue
+      void activate(store, mod, device, invoke)
+    }
+  }, [store, manifest, device, invoke])
+
+  return store.declaredCardIds().map((card) => ({
+    ...card,
+    render: store.cards.get(card.id)?.render,
+    failure: store.failed.get(card.moduleId),
+  }))
 }
 
 // ── Rendering one page ────────────────────────────────────────────────────────
