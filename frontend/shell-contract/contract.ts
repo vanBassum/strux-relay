@@ -5,6 +5,28 @@
 // is why it has NO IMPORTS, not even type-only ones: a file that imports cannot be
 // copied into a repo whose module graph it knows nothing about.
 //
+// ── What a host owes a module, besides this interface ────────────────────────
+// A module carries its own markup, components, layout and CSS; the shell owns what
+// Strux LOOKS like. Concretely, a host must:
+//
+//   1. Publish the shadcn token set as CSS custom properties on a document ancestor
+//      of the module's mount point — --background, --foreground, --card(-foreground),
+//      --popover(-foreground), --primary(-foreground), --secondary(-foreground),
+//      --muted(-foreground), --accent(-foreground), --border, --input, --ring,
+//      --destructive, --radius, and optionally --font-sans / --font-mono. These are
+//      the ONLY thing that crosses into a module, and they cross because custom
+//      properties inherit through a shadow boundary.
+//   2. Mark dark mode with `class="dark"` (or `data-theme="dark"`) on <html> or
+//      <body>, and keep it there as the theme changes. A module mirrors it onto its
+//      own shadow host.
+//   3. Render whatever DOM `render()` returns, without styling inside it. A module's
+//      stylesheet lives in a shadow root it owns, so a host's utility classes do not
+//      reach in — and a host must not rely on reaching in.
+//
+// A host must NOT be assumed to be React, Tailwind or shadcn beyond the import map
+// it publishes: an Angular shell that publishes the tokens, the theme class and a
+// mount point can host this React module unchanged.
+//
 // It deliberately does NOT describe the wire. The session-chunk framing, the auth
 // handshake, the reconnect loop and the single-in-flight queue all live in the
 // shell's own client; a module gets `request` and nothing beneath it. A module that
