@@ -36,7 +36,7 @@ internal sealed class DeviceRegistry(
         }
 
         connections[connection.DeviceId] = connection;
-        await AnnounceAsync();
+        await NotifyChangedAsync();
     }
 
     /// <summary>
@@ -53,7 +53,7 @@ internal sealed class DeviceRegistry(
         if (current)
         {
             connections.TryRemove(connection.DeviceId, out _);
-            await AnnounceAsync();
+            await NotifyChangedAsync();
         }
 
         return current;
@@ -70,8 +70,13 @@ internal sealed class DeviceRegistry(
             return;
 
         await connection.CloseAsync();
-        await AnnounceAsync();
+        await NotifyChangedAsync();
     }
 
-    private Task AnnounceAsync() => hub.Clients.All.SendAsync("DevicesChanged");
+    /// <summary>
+    /// Tells every open device list to re-read. Public because a connection can change
+    /// what a row SAYS without the set of connections changing at all — which is
+    /// exactly what a hello does.
+    /// </summary>
+    public Task NotifyChangedAsync() => hub.Clients.All.SendAsync("DevicesChanged");
 }

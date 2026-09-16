@@ -23,6 +23,18 @@ export type Device = {
   /** Only on a pending device: approving is keyed on the (id, token) pair. */
   token: string | null
   attempts: number | null
+  /**
+   * The git commit the firmware was built from, when it reports one. A version alone
+   * does not identify a build — two boards can both say 0.0.6 and be different code.
+   */
+  commit: string | null
+  /**
+   * Everything else the device said about itself on connect. Open by design: the
+   * device chooses the keys, the relay stores them all, and this shell shows the ones
+   * it has a place for and keeps the rest readable rather than inventing cells for
+   * facts it has never heard of.
+   */
+  details: Record<string, string> | null
 }
 
 /**

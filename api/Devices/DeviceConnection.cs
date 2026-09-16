@@ -107,11 +107,32 @@ internal sealed class DeviceConnection
 
     public string DeviceId { get; }
 
-    public string Firmware { get; }
+    /// <summary>
+    /// What the device said about itself on its hello, or whatever the legacy query
+    /// string carried until one arrives. Replaced wholesale rather than merged: a
+    /// hello is the device's complete statement about itself, and merging would leave
+    /// a key alive that the firmware has stopped reporting.
+    /// </summary>
+    public DeviceHello Hello { get; private set; } = DeviceHello.Empty;
 
-    public string Name { get; }
+    // Display only, and settable because a hello arrives AFTER the socket does.
+    // DeviceId is the technical identity and the thing the token proves; none of
+    // these are keyed on, so they can change under a live pipe without consequence.
+    public string Firmware { get; private set; }
 
-    public string Project { get; }
+    public string Name { get; private set; }
+
+    public string Project { get; private set; }
+
+    public string? Commit { get; private set; }
+
+    /// <summary>
+    /// Called once the device has said who it is, so the row can be persisted and
+    /// every open device list re-read. A callback rather than a dependency because
+    /// this class moves bytes: what a hello MEANS belongs to whoever accepted the
+    /// pipe.
+    /// </summary>
+    public Func<DeviceHello, CancellationToken, Task>? OnHello { get; set; }
 
     /// <summary>Where the pipe came from. Only known while it is up.</summary>
     public string? Address { get; }
@@ -202,6 +223,12 @@ internal sealed class DeviceConnection
             return;
         }
 
+        if (session == SessionChunk.HelloSession)
+        {
+            await ReceiveHelloAsync(payload, cancellationToken);
+            return;
+        }
+
         if (session == SessionChunk.TelemetrySession)
         {
             // Handed over by identity rather than by connection: the router has
@@ -272,6 +299,41 @@ internal sealed class DeviceConnection
         foreach (var browser in attached)
             if (!await browser.SendAsync(chunk, cancellationToken))
                 DropBrowser(browser);
+    }
+
+    /// <summary>
+    /// Takes the device's word for what it is. Unparseable is logged and dropped, not
+    /// fatal: a malformed hello costs the row its display name, and killing an
+    /// otherwise healthy pipe over a cosmetic field would be the worse trade.
+    ///
+    /// A key the device omits CLEARS the field rather than leaving the old value, and
+    /// that is the point of replacing rather than merging — a device renamed to
+    /// nothing is renamed to nothing.
+    /// </summary>
+    private async Task ReceiveHelloAsync(
+        ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
+    {
+        var hello = DeviceHello.Parse(payload.Span);
+        if (hello is null)
+        {
+            logger.LogWarning(
+                "device {DeviceId} sent a hello that is not a flat JSON object", DeviceId);
+            return;
+        }
+
+        Hello = hello;
+        Firmware = hello.Firmware ?? "unknown";
+        Name = hello.Name is { Length: > 0 } named ? named : DeviceId;
+        Project = hello.Project ?? "";
+        Commit = hello.Commit;
+
+        logger.LogInformation(
+            "device {DeviceId} said hello: {Name} {Project} fw {Firmware}{Commit}",
+            DeviceId, Name, Project, Firmware,
+            Commit is null ? "" : $" ({Commit})");
+
+        var announce = OnHello;
+        if (announce is not null) await announce(hello, cancellationToken);
     }
 
     // ── relay → device ────────────────────────────────────────────────────────

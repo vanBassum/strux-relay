@@ -342,13 +342,25 @@ function DeviceRow({
         </div>
       </TableCell>
 
-      {/* What it runs: which product, and which build of it. The version is mono
-          because it is compared character by character — "0.0.6" against "0.0.16"
-          is a reading somebody does with their eyes. */}
+      {/* What it runs: which product, and which build of it. Mono underneath because
+          it is compared character by character — "0.0.6" against "0.0.16" is a reading
+          somebody does with their eyes.
+
+          The commit sits beside the version because a version does not identify a
+          build: two boards both saying 0.0.6 can be different code, which is the
+          confusion this column exists to prevent. Everything else the device reported
+          is in the title — the device chooses those keys, so there is no cell to put
+          them in and no reason to lose them either. */}
       <TableCell>
         <div>{device.project || "—"}</div>
-        <div className="text-muted-foreground font-mono text-xs">
+        <div
+          className="text-muted-foreground font-mono text-xs"
+          title={describe(device.details)}
+        >
           {device.firmware}
+          {device.commit && (
+            <span className="opacity-70"> · {device.commit}</span>
+          )}
         </div>
       </TableCell>
 
@@ -501,4 +513,13 @@ function DeviceRow({
       </TableCell>
     </TableRow>
   )
+}
+
+/// The hello keys this build has no cell for, as one hoverable block. Undefined
+/// rather than an empty string when there are none, so the browser shows no tooltip
+/// at all instead of an empty one.
+function describe(details: Record<string, string> | null): string | undefined {
+  if (!details) return undefined
+  const lines = Object.entries(details).map(([key, value]) => `${key}: ${value}`)
+  return lines.length > 0 ? lines.join("\n") : undefined
 }

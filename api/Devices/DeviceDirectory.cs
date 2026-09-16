@@ -25,6 +25,10 @@ internal sealed class DeviceDirectory(PairingStore pairing, DeviceRegistry regis
         foreach (var device in state.Approved)
         {
             var live = registry.Find(device.DeviceId);
+            // The live pipe's copy wins while there is one: a device that renamed
+            // itself and reconnected has already said so, and the stored row is
+            // written from the same hello a moment later.
+            var hello = live?.Hello ?? DeviceHello.FromJson(device.Hello);
             devices.Add(new DeviceView(
                 device.DeviceId,
                 device.Name,
@@ -43,7 +47,9 @@ internal sealed class DeviceDirectory(PairingStore pairing, DeviceRegistry regis
                 live?.LastMessageAt,
                 device.ApprovedAt,
                 Token: null,
-                Attempts: null));
+                Attempts: null,
+                Commit: NullIfEmpty(live?.Commit ?? device.Commit),
+                Details: hello.Rest));
         }
 
         foreach (var device in state.Pending)
@@ -63,7 +69,11 @@ internal sealed class DeviceDirectory(PairingStore pairing, DeviceRegistry regis
                 LastMessageAt: null,
                 ApprovedAt: null,
                 device.Token,
-                device.Attempts));
+                device.Attempts,
+                // A pending device has said nothing the relay is willing to repeat: it
+                // is refused before the upgrade, so there is no socket for a hello.
+                Commit: null,
+                Details: null));
         }
 
         // Pending first — they are the rows that want a decision — then by name,
@@ -76,4 +86,7 @@ internal sealed class DeviceDirectory(PairingStore pairing, DeviceRegistry regis
                 .ThenBy(device => device.DeviceId, StringComparer.Ordinal)
         ];
     }
+
+    private static string? NullIfEmpty(string? value) =>
+        string.IsNullOrEmpty(value) ? null : value;
 }

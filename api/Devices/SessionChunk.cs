@@ -32,6 +32,19 @@ internal static class SessionChunk
     /// </summary>
     public const ushort TelemetrySession = 0xFFFF;
 
+    /// <summary>
+    /// Device-initiated like the two above, sent once immediately after connect:
+    /// what the device says about itself, as a flat key/value map (see
+    /// <see cref="Models.DeviceHello"/>).
+    ///
+    /// A session id rather than a payload marker, for the same reason telemetry has
+    /// one: the header is where a chunk says what it is, and the relay already
+    /// dispatches on it without reading a byte of the body. It also means the device
+    /// needs no new protocol VERB — a hello is not a command, nothing replies to it,
+    /// and it is not a request the device is waiting on.
+    /// </summary>
+    public const ushort HelloSession = 0xFFFE;
+
     // Session-id ownership. Both the relay and a browser would otherwise allocate
     // from 1 on the same device socket and collide — which presents as "the device
     // replied to the wrong request". So the relay owns the space: browser ids are
@@ -41,7 +54,8 @@ internal static class SessionChunk
     public const ushort BrowserIdBase = 1;
     public const ushort BrowserIdLimit = 0x8000;
     public const ushort ServerIdBase = 0x8000;
-    public const ushort ServerIdLimit = TelemetrySession;
+    // Stops short of the reserved pair at the top, so neither can be allocated.
+    public const ushort ServerIdLimit = HelloSession;
 
     /// <summary>
     /// The device's inbound window. A larger frame is refused rather than split,

@@ -1,13 +1,21 @@
 using StruxRelay.Cache;
 using Microsoft.Extensions.Options;
 using StruxRelay.Data;
+using StruxRelay.Models;
 using StruxRelay.Telemetry;
 
 namespace StruxRelay.Devices;
 
 /// <summary>
-/// The device's outbound pipe at <c>/device</c>. Registration is the query string
-/// — there is no protocol verb to exchange first.
+/// The device's outbound pipe at <c>/device</c>. The URL carries IDENTITY and nothing
+/// else — <c>?id=</c> plus an <c>X-Strux-Token</c> header — because the id is the one
+/// field the token proves and the one everything is keyed on. What the device is
+/// CALLED, what it runs and what it was built from arrive on the socket afterwards,
+/// as a hello (see <see cref="Models.DeviceHello"/>).
+///
+/// The old query parameters are still read when they are there, so a board in the
+/// field that has not been reflashed keeps filling in a device list. That fallback is
+/// the only reason this file still knows those names.
 ///
 /// Its own path rather than the base URL, for two reasons. In production the human
 /// side sits behind a reverse proxy that authenticates users, and a device cannot
@@ -38,9 +46,10 @@ internal static class DevicePipe
             return;
         }
 
-        var firmware = Query(context, "fw", "unknown");
-        var name = Query(context, "name", "");
-        var project = Query(context, "project", "");
+        // Null when the device said nothing, which is what a current firmware does —
+        // NOT empty strings, which would overwrite a name the relay already has with
+        // blanks on every reconnect.
+        var legacy = LegacyFrom(context);
         var token = context.Request.Headers["X-Strux-Token"].ToString();
         var address = context.Connection.RemoteIpAddress?.ToString();
 
@@ -50,7 +59,7 @@ internal static class DevicePipe
         // public internet: no stranger can register, and nobody can take an
         // approved device's slot.
         var decision = await pairing.AuthenticateAsync(
-            deviceId, token, name, project, firmware, context.RequestAborted);
+            deviceId, token, legacy, context.RequestAborted);
 
         if (!decision.Allowed)
         {
@@ -73,7 +82,20 @@ internal static class DevicePipe
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
         var connection = new DeviceConnection(
-            deviceId, firmware, name, project, address, socket, telemetry, logger);
+            deviceId,
+            legacy?.Firmware ?? "unknown",
+            legacy?.Name ?? "",
+            legacy?.Project ?? "",
+            address, socket, telemetry, logger);
+
+        // What the device says about itself, once it says it. Stored and announced
+        // here rather than inside the connection, which moves bytes and has no
+        // business knowing there is a database.
+        connection.OnHello = async (hello, cancellationToken) =>
+        {
+            await pairing.RecordHelloAsync(deviceId, hello, cancellationToken);
+            await registry.NotifyChangedAsync();
+        };
 
         await registry.AddAsync(connection);
 
@@ -84,10 +106,11 @@ internal static class DevicePipe
         // during somebody's first page load.
         var dropped = cache.DropDevice(deviceId);
 
+        // Deliberately says only what is known AT CONNECT. The name and version come
+        // a chunk later now, and the hello logs itself when it lands.
         logger.LogInformation(
-            "device {DeviceId} connected on pipe #{Pipe} ({Name} fw {Firmware}) from {Address}{Dropped}",
-            deviceId, connection.Pipe, string.IsNullOrEmpty(name) ? "unnamed" : name,
-            firmware, address,
+            "device {DeviceId} connected on pipe #{Pipe} from {Address}{Dropped}",
+            deviceId, connection.Pipe, address,
             dropped > 0 ? $" — dropped {dropped} cached files" : "");
 
         if (cacheOptions.Value.WarmOnConnect)
@@ -115,9 +138,24 @@ internal static class DevicePipe
         }
     }
 
-    private static string Query(HttpContext context, string key, string fallback)
+    /// <summary>
+    /// What an older firmware put in the connect URL, or null when it put nothing
+    /// there — which is what a device that sends a hello does.
+    ///
+    /// Any one of the three being present is enough to call it a legacy connect: a
+    /// device that names itself in the URL at all is one whose whole identity lives
+    /// there, and treating a partial set as "said nothing" would drop the parts it did
+    /// send.
+    /// </summary>
+    private static LegacyIdentity? LegacyFrom(HttpContext context)
     {
-        var value = context.Request.Query[key].ToString();
-        return string.IsNullOrEmpty(value) ? fallback : value;
+        var firmware = context.Request.Query["fw"].ToString();
+        var name = context.Request.Query["name"].ToString();
+        var project = context.Request.Query["project"].ToString();
+
+        if (firmware.Length == 0 && name.Length == 0 && project.Length == 0) return null;
+
+        return new LegacyIdentity(
+            name, project, firmware.Length == 0 ? "unknown" : firmware);
     }
 }

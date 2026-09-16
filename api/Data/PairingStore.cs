@@ -39,12 +39,20 @@ internal sealed class PairingStore(
 
     // ── the connect decision ──────────────────────────────────────────────────
 
+    /// <summary>
+    /// The decision, on the two facts it is made of: the id and the token. Nothing
+    /// else is needed and nothing else is trusted.
+    ///
+    /// <paramref name="legacy"/> is what an older firmware put in the connect URL, and
+    /// it is a TRANSITION: a device that sends a hello leaves it null and the columns
+    /// are written from the hello instead, once the socket is up. Null means "said
+    /// nothing", which is why it is not an empty string — an empty string would wipe a
+    /// name the relay already had.
+    /// </summary>
     public async Task<ConnectDecision> AuthenticateAsync(
         string deviceId,
         string token,
-        string name,
-        string project,
-        string firmware,
+        LegacyIdentity? legacy = null,
         CancellationToken cancellationToken = default)
     {
         await gate.WaitAsync(cancellationToken);
@@ -61,9 +69,12 @@ internal sealed class PairingStore(
                 if (TokenMatches(approved.Token, token))
                 {
                     approved.LastSeen = now;
-                    approved.Name = name;
-                    approved.Project = project;
-                    approved.Firmware = firmware;
+                    if (legacy is not null)
+                    {
+                        approved.Name = legacy.Name;
+                        approved.Project = legacy.Project;
+                        approved.Firmware = legacy.Firmware;
+                    }
                     await database.SaveChangesAsync(cancellationToken);
                     return ConnectDecision.Allow;
                 }
@@ -72,12 +83,12 @@ internal sealed class PairingStore(
                 // the same board after an NVS wipe — the MAC-derived id survives
                 // that and the token does not. The two are indistinguishable from
                 // here, so record and refuse: the operator decides which it was.
-                await RefuseAsync(database, deviceId, token, name, project, firmware, now,
+                await RefuseAsync(database, deviceId, token, legacy, now,
                     "token mismatch", cancellationToken);
                 return new ConnectDecision(false, "token mismatch");
             }
 
-            await RefuseAsync(database, deviceId, token, name, project, firmware, now,
+            await RefuseAsync(database, deviceId, token, legacy, now,
                 "not approved", cancellationToken);
             return new ConnectDecision(false, "device not approved");
         }
@@ -102,15 +113,13 @@ internal sealed class PairingStore(
         RelayDbContext database,
         string deviceId,
         string token,
-        string name,
-        string project,
-        string firmware,
+        LegacyIdentity? legacy,
         DateTime now,
         string reason,
         CancellationToken cancellationToken)
     {
         var isNew = await RememberPendingAsync(
-            database, deviceId, token, name, project, firmware, now, cancellationToken);
+            database, deviceId, token, legacy, now, cancellationToken);
 
         // Only the first sighting of a pair is an event. Logging one per refusal
         // filled the dashboard with the same line forty times and pushed the
@@ -126,9 +135,7 @@ internal sealed class PairingStore(
         RelayDbContext database,
         string deviceId,
         string token,
-        string name,
-        string project,
-        string firmware,
+        LegacyIdentity? legacy,
         DateTime now,
         CancellationToken cancellationToken)
     {
@@ -139,9 +146,12 @@ internal sealed class PairingStore(
         {
             pending.LastSeen = now;
             pending.Attempts += 1;
-            pending.Name = name;
-            pending.Project = project;
-            pending.Firmware = firmware;
+            if (legacy is not null)
+            {
+                pending.Name = legacy.Name;
+                pending.Project = legacy.Project;
+                pending.Firmware = legacy.Firmware;
+            }
             await database.SaveChangesAsync(cancellationToken);
             return false;
         }
@@ -158,14 +168,45 @@ internal sealed class PairingStore(
         {
             DeviceId = deviceId,
             Token = token,
-            Name = name,
-            Project = project,
-            Firmware = firmware,
+            Name = legacy?.Name ?? "",
+            Project = legacy?.Project ?? "",
+            Firmware = legacy?.Firmware ?? "",
             FirstSeen = now,
             LastSeen = now,
         });
         await database.SaveChangesAsync(cancellationToken);
         return true;
+    }
+
+    /// <summary>
+    /// Stores what an approved device said about itself.
+    ///
+    /// Only an APPROVED device can get here — a pending one is refused before the
+    /// upgrade, so there is no socket for it to say anything on. That ordering is the
+    /// whole security argument for moving this off the URL: nothing a device asserts
+    /// is written down until the relay has decided to trust it.
+    ///
+    /// The columns are the keys this build understands; the whole map goes in
+    /// <see cref="ApprovedDevice.Hello"/>, so a key nobody has written a cell for yet
+    /// is kept rather than dropped.
+    /// </summary>
+    public async Task RecordHelloAsync(
+        string deviceId, DeviceHello hello, CancellationToken cancellationToken = default)
+    {
+        await using var database = await contexts.CreateDbContextAsync(cancellationToken);
+
+        var approved = await database.Approved.FirstOrDefaultAsync(
+            device => device.DeviceId == deviceId, cancellationToken);
+        if (approved is null) return;
+
+        approved.Name = hello.Name ?? "";
+        approved.Project = hello.Project ?? "";
+        approved.Firmware = hello.Firmware ?? "";
+        approved.Commit = hello.Commit ?? "";
+        approved.Hello = hello.ToJson();
+
+        await database.SaveChangesAsync(cancellationToken);
+        await AnnounceAsync();
     }
 
     /// <summary>
@@ -212,7 +253,7 @@ internal sealed class PairingStore(
                 .OrderBy(device => device.DeviceId)
                 .Select(device => new ApprovedDeviceView(
                     device.DeviceId, device.Name, device.Project, device.Firmware,
-                    device.ApprovedAt, device.LastSeen))
+                    device.Commit, device.Hello, device.ApprovedAt, device.LastSeen))
                 .ToListAsync(cancellationToken),
             await database.Events
                 .OrderByDescending(entry => entry.At)

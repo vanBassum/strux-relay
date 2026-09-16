@@ -54,4 +54,15 @@ internal sealed record DeviceView(
     DateTime? LastMessageAt,
     DateTime? ApprovedAt,
     string? Token,
-    int? Attempts);
+    int? Attempts,
+    /// <summary>
+    /// The git commit the firmware was built from, when it reports one. A tag does
+    /// not identify a build — two boards can both say 0.1.0 and be different code.
+    /// </summary>
+    string? Commit = null,
+    /// <summary>
+    /// Everything else the device said about itself. Open by design: the relay stores
+    /// what it gets and the dashboard shows what it understands, so a firmware that
+    /// learns to report one more fact needs no change on this side at all.
+    /// </summary>
+    IReadOnlyDictionary<string, string>? Details = null);

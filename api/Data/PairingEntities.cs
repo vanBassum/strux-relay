@@ -21,6 +21,17 @@ internal sealed class ApprovedDevice
 
     public string Firmware { get; set; } = "";
 
+    /// <summary>The git commit the firmware was built from, when it reports one.</summary>
+    public string Commit { get; set; } = "";
+
+    /// <summary>
+    /// The device's last hello, whole, as JSON. The columns above are the keys this
+    /// relay understands well enough to sort and search on; this is everything it was
+    /// told, so learning to display one more field is a frontend change rather than a
+    /// migration. See <see cref="Models.DeviceHello"/>.
+    /// </summary>
+    public string Hello { get; set; } = "";
+
     public DateTime ApprovedAt { get; set; }
 
     public DateTime? LastSeen { get; set; }
@@ -39,6 +50,17 @@ internal sealed class PendingDevice
 
     public string Token { get; set; } = "";
 
+    /// <summary>
+    /// What the LEGACY connect URL carried, and empty for anything newer: a device is
+    /// refused before the upgrade, so a pending row is written before there is a
+    /// socket for a hello to arrive on.
+    ///
+    /// That is not a gap to close. These are unauthenticated strings from a device
+    /// nobody has vouched for yet, displayed beside an Approve button — the one place
+    /// on this dashboard where a chosen name could mislead the person deciding. The
+    /// id, the address and the attempt count are what the relay can actually stand
+    /// behind, and they are what the decision is made on.
+    /// </summary>
     public string Name { get; set; } = "";
 
     public string Project { get; set; } = "";

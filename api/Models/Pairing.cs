@@ -39,6 +39,9 @@ internal sealed record ApprovedDeviceView(
     string Name,
     string Project,
     string Firmware,
+    string Commit,
+    /// <summary>The device's last hello as stored JSON; see <see cref="DeviceHello"/>.</summary>
+    string Hello,
     DateTime ApprovedAt,
     DateTime? LastSeen);
 
@@ -48,6 +51,13 @@ internal sealed record RelayEventView(
     string Kind,
     string? DeviceId,
     string Detail);
+
+/// <summary>
+/// What an older firmware put in its connect URL. A TRANSITION type, and named so it
+/// reads as one at every call site: it exists so a device in the field that has not
+/// been reflashed still fills in a device list, and it goes when they have been.
+/// </summary>
+internal sealed record LegacyIdentity(string Name, string Project, string Firmware);
 
 /// <summary>May this device have the pipe, and if not, what to tell it.</summary>
 internal sealed record ConnectDecision(bool Allowed, string Reason)

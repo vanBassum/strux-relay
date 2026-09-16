@@ -191,6 +191,52 @@ large bundle and it is the bundle that decides whether this fits in a container.
 Eviction is least-recently-used. The Cache page shows the real policy, per-device
 size/files/last-warmed/last-used, and Warm and Clear per device or for everything.
 
+## What a device says about itself
+
+The connect URL carries IDENTITY and nothing else:
+
+```
+wss://relay/device?id=<device-id>
+X-Strux-Token: <token>
+```
+
+`id` is the only field the token proves and the only one anything is keyed on.
+Everything a human reads — name, project, firmware version, the commit it was built
+from — arrives a chunk later, on the socket, as a **hello**: a flat map of string keys
+to string values, all optional, no fixed schema.
+
+```json
+{ "type": "relay hello",
+  "fw": "0.1.0", "commit": "c538fc6", "project": "DPS50xx",
+  "name": "Bench supply", "idf": "6.0.0", "built": "2026-09-15T10:22:00Z" }
+```
+
+It rides its own reserved session (`0xFFFE`, beside telemetry's `0xFFFF`), so the relay
+dispatches on the header as it already does and the device needs no new protocol verb —
+nothing replies to a hello.
+
+The relay **stores what it gets, shows what it understands, and ignores the rest.** Four
+keys have columns (`name`, `project`, `fw`, `commit`); the whole map is kept as JSON
+beside them, so teaching the dashboard one more field is a frontend change and not a
+migration. A newer device reporting a key this relay never heard of costs nothing, and
+an older device omitting one is a blank cell rather than a failed connect.
+
+Why it left the URL: every new fact was a new query parameter, and each one cost
+percent-encoding, a slice of a fixed buffer on the device and a change on both sides —
+for display data riding in the one part of a connection that is logged, proxied and
+cached.
+
+**A pending device says nothing.** It is refused before the upgrade, so there is no
+socket for a hello, and its row shows the id, the address and the attempt count. That is
+not a gap: the alternative is unauthenticated strings from a device nobody has vouched
+for yet, displayed beside an Approve button. What the relay can stand behind is what the
+decision gets made on.
+
+**Transition.** The old `?fw=&name=&project=` are still read when they are there, so a
+board in the field that has not been reflashed keeps filling in a device list. A device
+that sends a hello leaves them off entirely, and the hello wins. The fallback goes once
+the fleet has moved.
+
 ## A device opens its own UI
 
 Clicking a device in the list opens **that device's own site**, at `/devices/<id>/`,
