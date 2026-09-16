@@ -272,9 +272,11 @@ command at all, which was always the point and is now true because there is noth
 left to break it.
 
 What stays is everything a device's OWN page needs: the pipe at `/device`, the browser
-end at `/devices/<id>/ws`, the file proxy and its cache — including the warmer's
-`ModuleBundlesAsync`, which asks a device which bundles its shell will load so the
-first open of one is not a live round trip.
+end at `/devices/<id>/ws`, and the file proxy with its cache. The warmer's
+`ModuleBundlesAsync` went too, once Strux deleted `ui modules` from the firmware: it
+asked every device on connect which bundles to pre-fetch, and the answer became a
+refusal every time. The warmer now pre-fetches what `index.html` actually references,
+which is what it did before modules existed.
 
 ## Not built yet
 
