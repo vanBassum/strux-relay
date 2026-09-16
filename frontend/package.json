@@ -6,10 +6,9 @@
   "packageManager": "pnpm@11.0.8",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-contract.mjs && tsc -b && vite build",
+    "build": "tsc -b && vite build",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
-    "check:contract": "node scripts/check-contract.mjs",
     "typecheck": "tsc -b --force",
     "preview": "vite preview"
   },

@@ -191,71 +191,44 @@ large bundle and it is the bundle that decides whether this fits in a container.
 Eviction is least-recently-used. The Cache page shows the real policy, per-device
 size/files/last-warmed/last-used, and Warm and Clear per device or for everything.
 
-## Device UI modules
+## A device opens its own UI
 
-A device's firmware declares its own UI and ships the bundle that draws it, so this
-relay composes a device page without knowing anything about that device at build
-time. Two pieces on the server:
+Clicking a device in the list opens **that device's own site**, at `/devices/<id>/`,
+in a new tab. There is no page in between: the row is the link.
 
-* **`GetDeviceUi`** reads the device's manifest (the `ui modules` command). A
-  dedicated hub method rather than a generic command call, because the
-  classification is the interesting part and only the relay can make it: a device
-  that *refused* the command ships no modules — the mixed-fleet case, and the common
-  one — while silence is a fault. Through a generic call both arrive as "it threw".
-* **`DeviceCommand`** is how a module talks to its device, over the pipe the device
-  already dialled and through the same gate as a file read. Not a second transport:
-  a browser speaking the pipe itself would need a socket per device with its own
-  reconnect and lifecycle, reimplementing `DeviceConnection` in a browser.
+It was in between until now. This shell had a device route of its own that read the
+firmware's `ui modules` manifest, loaded the bundles it named and drew them in this
+sidebar — so reaching a device cost two clicks, the second of them on a page whose
+whole content was a way off itself. The device already serves a complete UI, and the
+relay already proxies every byte of it over the same pipe, so composing a second one
+here bought nothing and cost a hop.
 
-Failure comes back as a **result, not an exception**. SignalR does not deliver a
-HubException's message intact — it wraps it in "An unexpected error occurred
-invoking 'X' on the server." — and a module is promised the device's own words.
+What that means for a device's pages: **nothing is lost.** A firmware module's page
+is still there, drawn by the device's own shell, which loads its bundles through this
+relay's file route like every other asset — including the cache warmer's head start on
+them (see `ModuleBundlesAsync`, which asks `ui modules` for exactly that reason and
+stays).
 
-The cache warmer asks `ui modules` and warms the bundles it names, because a bundle
-is named by firmware in a command reply and no regex over `index.html` can find it.
+A row is only clickable when the device is **online and approved**: a pending device
+has no pipe, an offline one has no pipe to fetch its page over, and a row that clicks
+through to nothing is worse than one that does not click. The kebab menu carries the
+same action disabled, with the reason in its tooltip, which is where a row that does
+nothing gets explained.
 
-The shell contract is vendored from Strux byte-identical with a lock file, and
-`pnpm build` fails if the copy was edited or the lock does not describe it. Upstream
-being ahead is a warning: this shell may deliberately speak an older `hostApi` and
-tells a device so through the manifest's range.
+### The server half went with it
 
-## Every device page is the firmware's
+`GetDeviceUi`, `DeviceCommand`, `SubscribeDeviceLogs`/`UnsubscribeDeviceLogs`, the
+`upload`/`download` routes and `Models/Ui.cs` are gone, and so is the per-device log
+hub group and `DeviceConnection`'s upload/download session helpers — every one of them
+existed to serve a module running in this shell. The hub is back to what it was for:
+the device list, the cache, telemetry and pairing. It knows the name of no device
+command at all, which was always the point and is now true because there is nothing
+left to break it.
 
-This shell contributes **nothing** to a device's navigation. Its own nav is Devices,
-Telemetry and Cache; everything under a device is exactly what that device's manifest
-declares, in the order it declares it, and the first entry is where you land. So the
-firmware chooses what its UI is *and* which part of it is the front page.
-
-Console, Settings and Firmware were briefly pages here. That was wrong for a reason
-worth keeping: writing them meant teaching this relay `settings list`, `log list` and
-`partition status` **by name**, which is precisely the coupling the module system
-exists to remove — and it meant two implementations of each page, one per shell. They
-are firmware modules now, and this relay knows the name of no device command at all.
-
-Cards went the same way. Nothing hosted them once no shell owned a page under a device.
-
-### What a module can ask for
-
-`transport.request` is one envelope and one reply, and three of the four modules needed
-more than that. The contract (v2) adds:
-
-* **`upload`** — `POST /devices/{id}/upload?command=…`, and **`download`** —
-  `GET /devices/{id}/download?command=…`. HTTP rather than the hub because these are
-  *bodies*: through the hub's JSON protocol a 1.2 MB image travels as base64, a third
-  larger and buffered as strings, where `Request.Body` is a stream the relay hands to
-  the pipe 4 KB at a time. Both are generic — `command` is the route the device
-  dispatches on, every other query parameter is an argument — so the relay names no
-  command and knows nothing about partitions. The erase/write/activate sequence lives
-  in the firmware module, which is the only side that knows what a partition is.
-* **`logs`** — the device's session-0 broadcast. It fans out to browser pipes, and a
-  hub client is not one, so `DeviceConnection` also pushes each line to a per-device
-  hub group (`SubscribeDeviceLogs`). Per device, because a dashboard with twenty
-  boards has no use for nineteen other logs. Nothing is replayed: a module that wants
-  what came before it subscribed asks the device for `log list`.
-
-`hostApi` is 2 as a result. A device whose modules need `upload` cannot run on a shell
-that speaks 1, and such a shell says "needs a newer shell" and stays usable otherwise —
-which is what the range is for.
+What stays is everything a device's OWN page needs: the pipe at `/device`, the browser
+end at `/devices/<id>/ws`, the file proxy and its cache — including the warmer's
+`ModuleBundlesAsync`, which asks a device which bundles its shell will load so the
+first open of one is not a live round trip.
 
 ## Not built yet
 

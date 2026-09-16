@@ -93,14 +93,9 @@ function SortableHead({
 
 export function DevicesPage({
   devices: list,
-  selectedId,
-  onOpen,
 }: {
-  /** Passed in rather than fetched here: the sidebar reads the same list. */
+  /** Passed in rather than fetched here: App owns the one copy of it. */
   devices: DeviceList
-  /** Marked in the list, because the sidebar is still scoped to it. */
-  selectedId: string | null
-  onOpen: (deviceId: string) => void
 }) {
   const { devices, loading, approve, forget } = list
 
@@ -215,10 +210,8 @@ export function DevicesPage({
                   // two rows, and that is deliberately visible.
                   key={`${device.deviceId}/${device.token ?? ""}`}
                   device={device}
-                  selected={device.deviceId === selectedId}
                   onApprove={approve}
                   onForget={forget}
-                  onOpen={onOpen}
                 />
               ))
             )}
@@ -276,29 +269,29 @@ export function DevicesPage({
 
 function DeviceRow({
   device,
-  selected,
   onApprove,
   onForget,
-  onOpen,
 }: {
   device: Device
-  selected: boolean
   onApprove: (device: Device) => Promise<void>
   onForget: (device: Device) => Promise<void>
-  onOpen: (deviceId: string) => void
 }) {
   const online = device.connection === "online"
-  // Only an approved device has anything to open — a pending one has no pipe and
-  // no pages, so its row stays inert rather than clicking through to nothing.
-  const openable = device.approval === "approved"
+  const href = deviceUiUrl(device.deviceId)
 
-  const open = () => onOpen(device.deviceId)
+  // Clicking a row opens the device's own site, and both conditions are load-bearing:
+  // a pending device has no pipe, and an offline one has no pipe to fetch its page
+  // over. Neither clicks through to anything, so neither row is clickable — the kebab
+  // says why in words.
+  const openable = online && device.approval === "approved"
+
+  // A new tab, not this one. The list is where you came from and where you will want
+  // to be again — with several devices in a fleet, opening one should not cost you
+  // your place in the list, your filters or your sort.
+  const open = () => window.open(href, "_blank", "noopener")
 
   return (
     <TableRow
-      // data-state is what TableRow already styles a selected row with, so the
-      // marking comes from the component rather than from a colour chosen here.
-      data-state={selected ? "selected" : undefined}
       className={openable ? "cursor-pointer" : undefined}
       // A <tr> is not a button, so the keyboard handling has to be spelled out
       // rather than inherited: without this the whole list becomes unreachable
@@ -306,7 +299,7 @@ function DeviceRow({
       role={openable ? "button" : undefined}
       tabIndex={openable ? 0 : undefined}
       aria-label={
-        openable ? `Select ${device.name || device.deviceId}` : undefined
+        openable ? `Open ${device.name || device.deviceId}` : undefined
       }
       onClick={openable ? open : undefined}
       onKeyDown={
@@ -320,10 +313,26 @@ function DeviceRow({
           : undefined
       }
     >
-      <TableCell
-        className={selected ? "shadow-[inset_2px_0_0_var(--primary)]" : undefined}
-      >
-        <div className="font-medium">{device.name || device.deviceId}</div>
+      <TableCell>
+        {/* A real anchor, even though the whole row already opens it. The row's
+            click handler is not a link: it cannot be middle-clicked, copied, or
+            opened by a browser's own "open in new window". The name is the thing
+            somebody aims at anyway, so that is where the link goes.
+            stopPropagation because otherwise the anchor AND the row both fire and
+            you get two tabs. */}
+        {openable ? (
+          <a
+            className="font-medium hover:underline"
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {device.name || device.deviceId}
+          </a>
+        ) : (
+          <div className="font-medium">{device.name || device.deviceId}</div>
+        )}
         <div className="text-muted-foreground font-mono text-xs">
           {device.deviceId}
         </div>
@@ -398,13 +407,10 @@ function DeviceRow({
             </Button>
           )}
 
-          {/* Everything else is secondary and lives behind the kebab.
-              "Open UI" used to be a button right here, and it was clicked by
-              accident repeatedly: it sat where the eye lands after reading the
-              row, it looked exactly as available as Approve, and the same
-              action was also in the sidebar. Leaving the device's site one
-              deliberate step away is the fix; the row's own click still just
-              selects. */}
+          {/* Opening the device is the ROW's click now, so this menu entry is not
+              how you get there — it is where the answer lives when you cannot. A
+              row that does nothing when clicked owes an explanation, and the
+              disabled item with its title is it. */}
           <DropdownMenu>
             <DropdownMenuTrigger
               render={

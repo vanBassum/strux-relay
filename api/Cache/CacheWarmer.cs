@@ -143,8 +143,8 @@ internal sealed partial class CacheWarmer(
     /// page paying a live pipe round trip — the one thing the warmer is for.
     ///
     /// The manifest itself is deliberately not cached. It is read here and thrown
-    /// away; the shell asks the device directly every time, because a stale nav is a
-    /// sidebar full of pages that then fail.
+    /// away — the relay has no other use for it. The device's OWN shell reads its own
+    /// manifest over its own pipe; this is only about having the bytes ready.
     ///
     /// A device that ships no modules refuses the command, and that is the ordinary
     /// case for most of a mixed fleet — so it costs one round trip and no warning.

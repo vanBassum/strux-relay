@@ -1,8 +1,6 @@
-using Microsoft.AspNetCore.SignalR;
 using StruxRelay.Cache;
 using Microsoft.Extensions.Options;
 using StruxRelay.Data;
-using StruxRelay.Hubs;
 using StruxRelay.Telemetry;
 
 namespace StruxRelay.Devices;
@@ -28,7 +26,6 @@ internal static class DevicePipe
         FrontendCache cache,
         CacheWarmer warmer,
         IOptions<CacheOptions> cacheOptions,
-        IHubContext<RelayHub> hub,
         ILoggerFactory loggers)
     {
         var logger = loggers.CreateLogger(typeof(DevicePipe).FullName!);
@@ -76,7 +73,7 @@ internal static class DevicePipe
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
         var connection = new DeviceConnection(
-            deviceId, firmware, name, project, address, socket, telemetry, hub, logger);
+            deviceId, firmware, name, project, address, socket, telemetry, logger);
 
         await registry.AddAsync(connection);
 
