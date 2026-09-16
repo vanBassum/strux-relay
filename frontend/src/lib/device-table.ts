@@ -1,13 +1,17 @@
 import type { Device } from "@/hooks/use-devices"
 
+/**
+ * One per column, and there are five because each column now carries TWO facts:
+ * Device is a name over an id, Firmware a project over a version, Status a
+ * connection over how long it has been that way, Approval a decision over when it
+ * was made. So a sort key is a key VECTOR, not a value — see `value` below.
+ */
 export type SortKey =
-  | "name"
-  | "project"
-  | "connection"
-  | "approval"
-  | "lastSeen"
-  | "address"
+  | "device"
   | "firmware"
+  | "status"
+  | "approval"
+  | "address"
 
 export type Sort = { key: SortKey; direction: "asc" | "desc" }
 
@@ -31,7 +35,7 @@ export const CONNECTION_OPTIONS = [
 
 export const APPROVAL_OPTIONS = [
   { value: "all" as const, label: "Any approval" },
-  { value: "pending" as const, label: "Pending" },
+  { value: "pending" as const, label: "Not approved" },
   { value: "approved" as const, label: "Approved" },
 ]
 
@@ -41,50 +45,67 @@ export const PAGE_SIZES = [10, 25, 50, 100]
 export const DEFAULT_PAGE_SIZE = 25
 
 /**
- * What a column sorts on. Two of these are deliberately not alphabetical:
- * ascending Connection puts online first and ascending Approval puts pending
- * first, because "sort by approval" means "show me what needs a decision", not
- * "order these words". Sorting them as text would put approved above pending and
- * offline above online, which is backwards in both cases.
+ * What a column sorts on: a vector compared element by element, because a column
+ * showing two facts has to order by both. Ascending Status puts online first and
+ * ascending Approval puts what needs a decision first — "sort by approval" means
+ * "show me what is waiting", not "order these words".
+ *
+ * Both tie-breaks negate a timestamp, so equal-ranked rows come out MOST RECENT
+ * first. That is deliberate and it is the same reason in both places: the offline
+ * device seen an hour ago and the device approved yesterday are the ones somebody
+ * is looking for, and burying them under a board last seen in June would be a
+ * literal reading of "ascending" that nobody wants.
  */
-function value(device: Device, key: SortKey): string | number | null {
+function value(device: Device, key: SortKey): (string | number | null)[] {
   switch (key) {
-    case "name":
-      return (device.name || device.deviceId).toLowerCase()
-    case "project":
-      return device.project ? device.project.toLowerCase() : null
-    case "connection":
-      return device.connection === "online" ? 0 : 1
-    case "approval":
-      return device.approval === "pending" ? 0 : 1
-    case "lastSeen":
-      return device.lastSeen ? Date.parse(device.lastSeen) : null
-    case "address":
-      return device.address
+    case "device":
+      return [(device.name || device.deviceId).toLowerCase(), device.deviceId]
     case "firmware":
-      return device.firmware || null
+      return [
+        device.project ? device.project.toLowerCase() : null,
+        device.firmware || null,
+      ]
+    case "status":
+      return [
+        device.connection === "online" ? 0 : 1,
+        device.lastSeen ? -Date.parse(device.lastSeen) : null,
+      ]
+    case "approval":
+      return [
+        device.approval === "pending" ? 0 : 1,
+        device.approvedAt ? -Date.parse(device.approvedAt) : null,
+      ]
+    case "address":
+      return [device.address]
   }
+}
+
+/// Nulls last in BOTH directions: a device with no address is not the
+/// lowest-addressed device, it is one the question does not apply to, so reversing
+/// the sort should not float it to the top.
+function compare(a: string | number | null, b: string | number | null): number {
+  if (a === null && b === null) return 0
+  if (a === null) return 1
+  if (b === null) return -1
+  return typeof a === "number" ? a - (b as number) : a.localeCompare(b as string)
 }
 
 export function sortDevices(devices: Device[], sort: Sort | null): Device[] {
   if (!sort) return devices
 
-  const ordered = [...devices].sort((left, right) => {
+  return [...devices].sort((left, right) => {
     const a = value(left, sort.key)
     const b = value(right, sort.key)
 
-    // Nulls last in BOTH directions: a device with no address is not the
-    // lowest-addressed device, it is one the question does not apply to, so
-    // reversing the sort should not float it to the top.
-    if (a === null && b === null) return 0
-    if (a === null) return 1
-    if (b === null) return -1
-
-    const compared = typeof a === "number" ? a - (b as number) : a.localeCompare(b as string)
-    return sort.direction === "asc" ? compared : -compared
+    for (let index = 0; index < a.length; index++) {
+      const compared = compare(a[index], b[index])
+      // The direction flips every element, including the tie-break: a reversed
+      // column that kept its second key ascending would order rows by something
+      // the header does not describe.
+      if (compared !== 0) return sort.direction === "asc" ? compared : -compared
+    }
+    return 0
   })
-
-  return ordered
 }
 
 export function filterDevices(devices: Device[], filters: Filters): Device[] {

@@ -23,6 +23,20 @@ export function ago(iso: string | null): string {
   return plural(hours / 24, "day")
 }
 
+/**
+ * "14 Sep 2026" — a date with no time, for something that happened once and whose
+ * hour nobody cares about. The browser's locale rather than a fixed one, so it reads
+ * the way the reader writes dates; the exact instant is still a title away.
+ */
+export function date(iso: string | null): string {
+  if (!iso) return "—"
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  })
+}
+
 /** An absolute local time, for the title beside the relative one. */
 export function absolute(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString() : "never"

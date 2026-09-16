@@ -4,6 +4,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   ChevronUpIcon,
+  CheckIcon,
   ChevronsUpDownIcon,
   CpuIcon,
   EllipsisIcon,
@@ -47,16 +48,19 @@ import {
   type Sort,
   type SortKey,
 } from "@/lib/device-table"
-import { absolute, ago, duration } from "@/lib/time"
+import { absolute, ago, date, duration } from "@/lib/time"
 
+// Five columns carrying eight facts. Name and id are one thing to look at, and so
+// are project and version, and so are "online" and how long it has been online — so
+// each pair is one column with the identifying line on top and the qualifying one
+// under it in a smaller, quieter type. Seven columns of one fact each said no more
+// and made the table a horizontal scroll on anything but a wide window.
 const COLUMNS: { key: SortKey; label: string }[] = [
-  { key: "name", label: "Name" },
-  { key: "project", label: "Project" },
-  { key: "connection", label: "Connection" },
+  { key: "device", label: "Device" },
+  { key: "firmware", label: "Firmware" },
+  { key: "status", label: "Status" },
   { key: "approval", label: "Approval" },
-  { key: "lastSeen", label: "Last seen" },
   { key: "address", label: "Address" },
-  { key: "firmware", label: "Version" },
 ]
 
 function SortableHead({
@@ -337,7 +341,17 @@ function DeviceRow({
           {device.deviceId}
         </div>
       </TableCell>
-      <TableCell>{device.project || "—"}</TableCell>
+
+      {/* What it runs: which product, and which build of it. The version is mono
+          because it is compared character by character — "0.0.6" against "0.0.16"
+          is a reading somebody does with their eyes. */}
+      <TableCell>
+        <div>{device.project || "—"}</div>
+        <div className="text-muted-foreground font-mono text-xs">
+          {device.firmware}
+        </div>
+      </TableCell>
+
       <TableCell>
         <span className="flex items-center gap-1.5">
           <span
@@ -345,50 +359,57 @@ function DeviceRow({
           />
           {online ? "Online" : "Offline"}
         </span>
-        {/* How long the pipe has been up, which is a different question from
-            when the device last spoke — a board can hold one open for hours
-            while saying nothing. */}
-        {online && (
-          <div
-            className="text-muted-foreground text-xs"
-            title={`Connected since ${absolute(device.connectedAt)}`}
-          >
-            for {duration(device.connectedAt)}
-          </div>
-        )}
+        {/* Online says how long the PIPE has been up, which is a different question
+            from when the device last spoke — a board can hold one open for hours
+            while saying nothing. Offline has no pipe to measure, so it answers the
+            other question instead. Showing the last MESSAGE while online read
+            "6 minutes ago" beside a green dot: true, since an idle board says
+            nothing for minutes, and alarming for no reason. It moves to the title,
+            where it informs rather than worries. */}
+        <div
+          className="text-muted-foreground text-xs"
+          title={
+            online
+              ? `Last message ${ago(device.lastMessageAt)} · connected since ${absolute(device.connectedAt)}`
+              : absolute(device.lastSeen)
+          }
+        >
+          {online
+            ? `for ${duration(device.connectedAt)}`
+            : device.lastSeen
+              ? `last seen ${ago(device.lastSeen)}`
+              : "never seen"}
+        </div>
       </TableCell>
+
+      {/* A DATE for an approved device, not another badge saying "Approved". The
+          column already answers the yes/no question by whether it holds a date at
+          all, so spending a badge on it would leave the two states looking equally
+          weighty — and only one of them is asking for anything. Amber, and the only
+          colour in the row besides the status dot, because a device waiting to be
+          let in is the one thing on this page that wants doing. */}
       <TableCell>
         {device.approval === "pending" ? (
-          <Badge variant="outline">
-            Pending
-            {device.attempts && device.attempts > 1
-              ? ` · ${device.attempts} tries`
-              : ""}
+          <Badge
+            variant="outline"
+            className="border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-400"
+            title={
+              device.attempts && device.attempts > 1
+                ? `${device.attempts} connection attempts so far`
+                : undefined
+            }
+          >
+            Not approved
           </Badge>
         ) : (
-          <Badge variant="secondary">Approved</Badge>
+          <span title={absolute(device.approvedAt)}>{date(device.approvedAt)}</span>
         )}
       </TableCell>
-      {/* "now" for a connected device, and that is a claim the transport
-          actually supports: the firmware pings every 30 s and tears the pipe
-          down when one fails, so an open pipe means it was alive within 30 s.
-          Showing the last MESSAGE here instead read "6 minutes ago" beside a
-          green Online dot — true, since an idle board says nothing for minutes,
-          and alarming for no reason. The quiet-since detail moves to the title,
-          where it informs rather than worries. */}
-      <TableCell
-        title={
-          online
-            ? `Last message ${ago(device.lastMessageAt)} · connected since ${absolute(device.connectedAt)}`
-            : absolute(device.lastSeen)
-        }
-      >
-        {online ? "now" : ago(device.lastSeen)}
-      </TableCell>
+
       <TableCell className="font-mono text-xs">
         {device.address ?? "—"}
       </TableCell>
-      <TableCell className="font-mono text-xs">{device.firmware}</TableCell>
+
       <TableCell className="text-right">
         {/* Stops here rather than on each button: approving or forgetting a
             device must not also open it, and putting the guard on the container
@@ -397,20 +418,17 @@ function DeviceRow({
           className="flex justify-end gap-1"
           onClick={(event) => event.stopPropagation()}
         >
-          {/* Approve stays a button, and only this one does. It is the whole
-              point of a pending row — the operator is here to make that
-              decision — so burying it behind a menu would hide the primary
-              action to tidy away the secondary ones. */}
-          {device.approval === "pending" && (
-            <Button size="sm" onClick={() => void onApprove(device)}>
-              Approve
-            </Button>
-          )}
+          {/* Every action is behind the kebab, Approve included. It was a button
+              sitting in this cell, and the argument for that was real — approving is
+              why somebody is looking at a pending row at all. What settles it is
+              that the row now says "Not approved" in amber two columns to the left,
+              which is a louder signal than the button was, and which does not put a
+              primary button on every row of a fresh install.
 
-          {/* Opening the device is the ROW's click now, so this menu entry is not
-              how you get there — it is where the answer lives when you cannot. A
-              row that does nothing when clicked owes an explanation, and the
-              disabled item with its title is it. */}
+              Opening the device is the ROW's click, so that entry is not how you get
+              there either — it is where the answer lives when you cannot. A row that
+              does nothing when clicked owes an explanation, and the disabled item
+              with its title is it. */}
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -424,6 +442,16 @@ function DeviceRow({
               }
             />
             <DropdownMenuContent align="end" className="w-48">
+              {device.approval === "pending" && (
+                <>
+                  <DropdownMenuItem onClick={() => void onApprove(device)}>
+                    <CheckIcon />
+                    Approve device
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+
               {/* Disabled rather than absent when there is nothing to open, so
                   the menu keeps one shape and says why instead of quietly
                   offering less. A pending device has no pipe and no pages; an
