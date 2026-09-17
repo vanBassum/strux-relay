@@ -37,6 +37,16 @@ internal sealed record DeviceHello(IReadOnlyDictionary<string, string> Values)
 
     public string? Project => Value("project");
 
+    /// <summary>
+    /// The address the device holds on its OWN network, which is the only party that
+    /// knows it. What the socket reports is wherever the connection emerged — a NAT,
+    /// and behind this relay's reverse proxy the proxy's peer address on the container
+    /// network, which is the same 172.18.0.x for every device on the list. So a
+    /// reported address beats an observed one, and the observed one stays as the
+    /// fallback for firmware that does not send this yet.
+    /// </summary>
+    public string? Ip => Value("ip");
+
     private string? Value(string key) =>
         Values.TryGetValue(key, out var value) && value.Length > 0 ? value : null;
 
@@ -51,7 +61,7 @@ internal sealed record DeviceHello(IReadOnlyDictionary<string, string> Values)
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
 
     private static readonly HashSet<string> Understood =
-        new(StringComparer.Ordinal) { "fw", "commit", "name", "project" };
+        new(StringComparer.Ordinal) { "fw", "commit", "name", "project", "ip" };
 
     /// <summary>
     /// Parses one hello payload. Returns null for anything that is not a flat JSON

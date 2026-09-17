@@ -42,7 +42,11 @@ internal sealed class DeviceDirectory(PairingStore pairing, DeviceRegistry regis
                 // is what this used to be — that is a fact about when the list
                 // was built, dressed up as a fact about the device.
                 live is not null ? live.LastMessageAt : device.LastSeen,
-                live?.Address,
+                // What the device SAYS its address is, falling back to what the socket
+                // observed. The observed one is this relay's own docker-network peer —
+                // Traefik — so it was 172.18.0.x for every device in the list, which
+                // is an address nobody can reach anything at.
+                NullIfEmpty(hello.Ip) ?? live?.Address,
                 live?.ConnectedAt,
                 live?.LastMessageAt,
                 device.ApprovedAt,
