@@ -24,12 +24,17 @@ namespace StruxRelay.Migrations.Sqlite
                 type: "TEXT",
                 nullable: true);
 
+            // "issued" and not "": every row that exists when this runs was created on
+            // the dashboard, which is exactly what that value means. An empty string
+            // would be a third state the model does not have.
             migrationBuilder.AddColumn<string>(
                 name: "Kind",
                 table: "McpTokens",
                 type: "TEXT",
                 nullable: false,
-                defaultValue: "");
+                defaultValue: "issued");
+
+            migrationBuilder.Sql("UPDATE McpTokens SET Kind = 'issued' WHERE Kind = ''");
 
             migrationBuilder.AddColumn<string>(
                 name: "RefreshHash",
