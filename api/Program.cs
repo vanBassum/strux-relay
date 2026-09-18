@@ -77,6 +77,10 @@ builder.Services.AddMcpServer(options => options.ServerInfo = new Implementation
 builder.Services.AddSingleton<TelemetryRouter>();
 builder.Services.AddHostedService(services => services.GetRequiredService<TelemetryRouter>());
 
+// Named once: the guard below, the endpoints below that, and the Traefik router
+// that routes this path past the proxy's forward-auth all have to agree on it.
+const string McpPath = "/mcp";
+
 var app = builder.Build();
 
 await RelayDatabase.MigrateAsync(app.Services, app.Logger);
@@ -104,10 +108,17 @@ app.UseStaticFiles();
 
 app.MapHub<RelayHub>("/hub");
 
-// The MCP endpoint. Mapped before the SPA fallback for the same reason /device is:
-// without a route here an MCP client's POST would be answered with index.html and a
-// 200, which is a failure that names the wrong cause.
-app.MapMcp("/mcp");
+// The MCP endpoint, and the bearer check in front of it. Mapped before the SPA
+// fallback for the same reason /device is: without a route here an MCP client's POST
+// would be answered with index.html and a 200, which is a failure that names the wrong
+// cause.
+//
+// The check is middleware on the whole prefix rather than a filter on the endpoint,
+// because streamable HTTP is several requests and the SDK maps sub-paths under it —
+// see McpBearerToken. It is registered here, one line above the endpoints it guards, so
+// the two cannot drift apart.
+app.UseMcpBearerToken(McpPath);
+app.MapMcp(McpPath);
 
 // The device's outbound pipe. Mapped BEFORE the SPA fallback, and the reason is
 // not style: without a route here the fallback answered a device's upgrade request

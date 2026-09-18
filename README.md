@@ -8,7 +8,7 @@ device  ──ws──►  /device?id=<id>&fw=<ver>     outbound, NAT-friendly
 browser ──ws──►  /hub                         the dashboard's own API (SignalR)
 browser ──ws──►  /devices/<id>/ws             relayed onto the device pipe
 browser ──http─►  /devices/<id>/{path}        → `web read`, served from cache
-agent   ──http─►  /mcp                         three generic tools over any device
+agent   ──http─►  /mcp                         three generic tools, bearer token
 ```
 
 ASP.NET Core on .NET 10, with a React + shadcn/ui dashboard. It replaced a
@@ -242,10 +242,18 @@ the fleet has moved.
 ## MCP: an agent drives a device
 
 The relay speaks [MCP](https://modelcontextprotocol.io) at **`/mcp`** (streamable HTTP,
-stateless). Point an MCP client at it:
+stateless). Point an MCP client at it, with the bearer token the deployment was given:
 
 ```jsonc
-{ "mcpServers": { "strux": { "type": "http", "url": "https://relay.example/mcp" } } }
+{
+  "mcpServers": {
+    "strux": {
+      "type": "http",
+      "url": "https://relay.example/mcp",
+      "headers": { "Authorization": "Bearer <the relay's MCP token>" }
+    }
+  }
+}
 ```
 
 Three tools, and deliberately only three:
@@ -284,8 +292,49 @@ would be a guess about somebody else's firmware. What a command does to a device
 device's own description to give, and whether a model may drive that board at all is the
 operator's switch.
 
-**Auth is the proxy's, as everywhere else on the human side.** `/mcp` sits with the
-dashboard, behind whatever authenticates people — there is no separate MCP token yet.
+### Getting in: one bearer token
+
+`/mcp` is the one path that does **not** sit behind the reverse proxy's forward-auth,
+and it cannot: forward-auth answers an unauthenticated request with a redirect to a
+login flow, and a program following a 302 to an OAuth screen learns nothing. So the
+proxy routes `/mcp` straight through and the relay checks an
+`Authorization: Bearer <token>` header itself — in the process that owns the thing being
+protected, rather than in a label on a container.
+
+```bash
+curl -i https://relay.example/mcp \
+  -H "Authorization: Bearer $STRUX_MCP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+The token comes from configuration and nowhere else:
+
+```
+Relay__Mcp__Token=<a long random string>      # env var, from your secrets store
+```
+
+or the same thing as `Relay:Mcp:Token` in `appsettings.json` for a local run. It is never
+compiled in, never defaulted and never in this repository.
+
+What the check does, and deliberately does not do:
+
+* every request under `/mcp` is checked, not just the first — streamable HTTP is a POST
+  for the call, a GET that holds the event stream open, and sub-paths (`/mcp/sse`,
+  `/mcp/message`) beneath the same prefix. Authenticating only the opening request would
+  leave the stream that carries the answers open to whoever asked for it;
+* a missing or wrong token is **401** with `WWW-Authenticate: Bearer`, never a redirect;
+* the comparison is constant time, like the device token's;
+* **no token configured means the endpoint refuses everything** (503) and says so at
+  startup. An unset secret must not silently publish a device-driving API — that is the
+  failure nothing looks wrong from outside;
+* there are no users, scopes, refresh tokens or OAuth behind it. This is one machine
+  credential answering one question — "is this the machine we gave it to". Which devices
+  that machine may then reach is the *other* gate, and stays the per-device MCP switch.
+
+The dashboard, the hub and every browser path keep their forward-auth, and `/device`
+keeps its own unauthenticated route and its own device token. Neither changed.
 
 ## A device opens its own UI
 
