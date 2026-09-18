@@ -9,6 +9,7 @@ browser ──ws──►  /hub                         the dashboard's own API 
 browser ──ws──►  /devices/<id>/ws             relayed onto the device pipe
 browser ──http─►  /devices/<id>/{path}        → `web read`, served from cache
 agent   ──http─►  /mcp                         three generic tools, bearer token
+agent   ──http─►  /oauth/*, /.well-known/oauth-*  OAuth 2.1, for clients that need it
 ```
 
 ASP.NET Core on .NET 10, with a React + shadcn/ui dashboard. It replaced a
@@ -301,6 +302,11 @@ proxy routes `/mcp` straight through and the relay checks an
 `Authorization: Bearer <token>` header itself — in the process that owns the thing being
 protected, rather than in a label on a container.
 
+There are two ways in, and they end in the same place — a bearer token the endpoint
+checks on every request. Clients that can hold a secret (Claude Code, a script, curl)
+get one from the dashboard; ChatGPT gets one by asking a human, through the OAuth flow
+below.
+
 **Tokens are managed on the dashboard's MCP page.** Name one after whatever will hold
 it, and it is shown exactly once: the relay stores a SHA-256 hash and a four-character
 hint, so nothing on this side can produce the value again. Each row says when it was
@@ -333,7 +339,42 @@ curl -i https://relay.example/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
-**A second source, deliberately.** The deployment may also configure one token:
+### ChatGPT: OAuth, because it will not carry a token
+
+ChatGPT's connector dialog has no field for a bearer token. It discovers an
+authorization server from the MCP endpoint and runs an authorization-code flow, or it
+does not connect — so the relay **is** that authorization server. Add a connector with
+the URL above, choose **OAuth**, approve it once in the browser, and the grant appears
+in the token list like any other credential, revocable in the same place.
+
+What the relay serves for it:
+
+| path | who reaches it | what it is |
+| --- | --- | --- |
+| `/.well-known/oauth-protected-resource` | the client, unauthenticated | which authorization server to ask, and this server's canonical URI |
+| `/.well-known/oauth-authorization-server` | the client, unauthenticated | the endpoints below, and `S256` |
+| `/oauth/register` | the client, unauthenticated | dynamic client registration (RFC 7591) |
+| `/oauth/authorize` | **a person, behind Authentik** | the consent screen |
+| `/oauth/token` | the client, unauthenticated | code → token, and refresh |
+
+The one row that matters is `/oauth/authorize`. It is the only part of the flow a human
+performs, so it is the only part left behind forward-auth — which means the relay never
+sees a password and has no accounts of its own: by the time the consent page renders,
+the proxy has already established who is there. Everything else is a program talking to
+a program, and a 302 to a login page would end the conversation.
+
+A client registering itself is not a hole: a `client_id` grants nothing on its own, and
+every flow still ends with somebody pressing Allow on a page that says, in words, that
+this will let the client command real hardware.
+
+The parts that are not negotiable, each closing a documented attack: PKCE with `S256`
+(plain is refused), exact redirect-URI matching, single-use codes that live one minute,
+the RFC 8707 `resource` recorded on the grant and checked on every request, and refresh
+tokens that rotate. Tokens are opaque and checked against the relay's own table rather
+than signed — the relay is both the authorization server and the resource server, so
+there is no third party that needs to verify anything, and no signing key to rotate.
+
+**A third source, deliberately.** The deployment may also configure one token:
 
 ```
 Relay__Mcp__Token=<a long random string>      # env var, from your secrets store

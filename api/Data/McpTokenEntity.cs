@@ -26,7 +26,44 @@ internal sealed class McpToken
     /// <summary>The token's first few characters, for telling rows apart.</summary>
     public string Hint { get; set; } = "";
 
+    /// <summary>
+    /// How this credential came to exist: <c>issued</c> for one created on the
+    /// dashboard, <c>oauth</c> for one an MCP client obtained by asking a human for
+    /// consent. They are the same kind of thing once issued — a bearer token that the
+    /// endpoint checks and the page can revoke — so they share a table rather than
+    /// each getting their own half-list in the UI.
+    /// </summary>
+    public string Kind { get; set; } = "issued";
+
+    /// <summary>
+    /// For an OAuth grant, the client's own name for itself ("ChatGPT"). Untrusted
+    /// and display-only: a client chooses it at registration.
+    /// </summary>
+    public string ClientName { get; set; } = "";
+
+    /// <summary>
+    /// The resource this token was issued for (RFC 8707), and the audience check the
+    /// endpoint makes on every request. A token is only good for the MCP endpoint it
+    /// was asked for.
+    /// </summary>
+    public string Resource { get; set; } = "";
+
     public DateTime CreatedAt { get; set; }
+
+    /// <summary>
+    /// When it stops working on its own. Null for a dashboard-issued token, which is
+    /// a credential a person put in a config file and which should not expire out from
+    /// under them; set for an OAuth grant, which has a refresh token behind it.
+    /// </summary>
+    public DateTime? ExpiresAt { get; set; }
+
+    /// <summary>
+    /// SHA-256 of the refresh token that renews this grant, or empty when there is
+    /// none. Rotated on every use, as OAuth 2.1 requires for public clients: the old
+    /// refresh token stops working the moment a new one is handed out, so a stolen
+    /// copy is detectable by the legitimate client suddenly being logged out.
+    /// </summary>
+    public string RefreshHash { get; set; } = "";
 
     /// <summary>
     /// When this token last authenticated a request. Null until it is used once —

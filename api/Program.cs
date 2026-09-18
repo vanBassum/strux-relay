@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.AspNetCore.HttpOverrides;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Protocol;
 using StruxRelay.Cache;
@@ -87,6 +88,22 @@ const string McpPath = "/mcp";
 
 var app = builder.Build();
 
+// TLS ends at the reverse proxy, so without this every absolute URL this relay
+// composes says http:// — and OAuth refuses to run over one. It is also what makes the
+// discovery documents name the host a client actually reached, rather than Kestrel's
+// idea of it.
+//
+// KnownNetworks and KnownProxies are cleared because the proxy is a container on a
+// docker network whose address is not knowable here. That is safe for exactly one
+// reason: this port is not reachable except through that proxy. A deployment that
+// publishes it directly must set Relay:PublicUrl instead.
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost,
+    KnownNetworks = { },
+    KnownProxies = { },
+});
+
 await RelayDatabase.MigrateAsync(app.Services, app.Logger);
 
 // The device pipe is a raw socket, not a hub, so the upgrade is handled here.
@@ -123,6 +140,12 @@ app.MapHub<RelayHub>("/hub");
 // the two cannot drift apart.
 app.UseMcpBearerToken(McpPath);
 app.MapMcp(McpPath);
+
+// The relay's own OAuth 2.1 authorization server: the discovery documents, dynamic
+// client registration, the consent page and the token endpoint. It exists because
+// ChatGPT will not carry a static token — see McpOAuth. Everything here is mapped
+// before the SPA fallback for the usual reason.
+app.MapMcpOAuth(McpPath);
 
 // The device's outbound pipe. Mapped BEFORE the SPA fallback, and the reason is
 // not style: without a route here the fallback answered a device's upgrade request

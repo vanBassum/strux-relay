@@ -78,6 +78,9 @@ function aiBriefing(url: string, token: string): string {
 
   URL:  ${url}
   Auth: send the HTTP header  Authorization: Bearer ${token}
+        (ChatGPT instead: add it as a connector with this URL and pick OAuth —
+         it registers itself, you approve it once in the browser, and no token
+         from this page is needed)
 
 MCP client config (Claude Desktop / Claude Code style):
 
@@ -232,6 +235,17 @@ export function McpPage() {
             <span className="text-sm font-medium">MCP client config</span>
             <Snippet text={clientConfig(url, token)} label="Copy config" />
           </div>
+
+          {/* ChatGPT is the reason this relay runs an authorization server at all:
+              its connector UI has no field for a token. Saying so here saves
+              somebody pasting one into a box that does not exist. */}
+          <p className="text-muted-foreground text-xs">
+            <strong className="text-foreground">ChatGPT</strong> does not take a
+            token: add a connector with the URL above, choose{" "}
+            <strong className="text-foreground">OAuth</strong>, and approve it once
+            in the browser. The grant then appears in the list below and can be
+            revoked there like any other.
+          </p>
         </CardContent>
       </Card>
 
@@ -387,16 +401,33 @@ function TokenRow({
   onForget: (token: McpToken) => Promise<void>
 }) {
   const revoked = token.revokedAt !== null
+  // An OAuth grant lapses on its own, and its client renews it silently — so an
+  // expired row is usually a connector nobody has used since, not a problem.
+  const expired =
+    token.expiresAt !== null && new Date(token.expiresAt).getTime() < Date.now()
 
   return (
     <TableRow className={revoked ? "opacity-60" : undefined}>
       <TableCell>
         <div className="flex items-center gap-2 font-medium">
           {token.name}
-          {revoked && (
+          {/* Where it came from, only when that is not the ordinary case: a row with
+              no badge is one somebody created on this page. */}
+          {token.kind === "oauth" && (
+            <Badge variant="outline" title="Granted through the OAuth consent screen">
+              OAuth
+            </Badge>
+          )}
+          {revoked ? (
             <Badge variant="outline" title={absolute(token.revokedAt)}>
               Revoked
             </Badge>
+          ) : (
+            expired && (
+              <Badge variant="outline" title={absolute(token.expiresAt)}>
+                Expired
+              </Badge>
+            )
           )}
         </div>
         {/* Enough of the token to match it against a config file, and nowhere near
@@ -412,6 +443,11 @@ function TokenRow({
           client ever actually connect". */}
       <TableCell title={absolute(token.lastUsedAt)}>
         {token.lastUsedAt ? ago(token.lastUsedAt) : "never used"}
+        {token.expiresAt && !revoked && (
+          <div className="text-muted-foreground text-xs" title={absolute(token.expiresAt)}>
+            {expired ? "expired" : `expires ${ago(token.expiresAt)}`}
+          </div>
+        )}
       </TableCell>
 
       <TableCell className="text-right">

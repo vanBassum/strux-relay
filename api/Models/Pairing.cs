@@ -78,7 +78,11 @@ internal sealed record McpTokenView(
     string Hint,
     DateTime CreatedAt,
     DateTime? LastUsedAt,
-    DateTime? RevokedAt);
+    DateTime? RevokedAt,
+    /// <summary>"issued" for one created here, "oauth" for one a client was granted.</summary>
+    string Kind = "issued",
+    /// <summary>When it lapses on its own. Null for a token created on the page.</summary>
+    DateTime? ExpiresAt = null);
 
 /// <summary>
 /// Everything the MCP page draws. <see cref="Enabled"/> is what the endpoint will
@@ -102,6 +106,12 @@ internal sealed record McpTokenCreated(
     string? Error = null);
 
 internal sealed record McpTokenResult(bool Ok, string? Error = null);
+
+/// <summary>
+/// What an OAuth client gets: a token to use, a token to renew it with, and when the
+/// first one stops working.
+/// </summary>
+internal sealed record McpGrant(string AccessToken, string RefreshToken, DateTime ExpiresAt);
 
 /// <summary>The result of flipping a device's MCP exposure.</summary>
 internal sealed record McpExposureResult(bool Ok, bool Exposed, string? Error = null);

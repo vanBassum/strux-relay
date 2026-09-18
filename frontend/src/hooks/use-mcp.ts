@@ -12,6 +12,14 @@ export type McpToken = {
   createdAt: string
   lastUsedAt: string | null
   revokedAt: string | null
+  /**
+   * How it came to exist: "issued" for one created on this page, "oauth" for one a
+   * client was granted after somebody pressed Allow. Same kind of credential either
+   * way — this only changes what the row says about where it came from.
+   */
+  kind: "issued" | "oauth"
+  /** When it lapses on its own. Null for a token created here, which does not. */
+  expiresAt: string | null
 }
 
 export type McpState = {

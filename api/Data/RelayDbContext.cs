@@ -31,6 +31,12 @@ internal sealed class RelayDbContext(DbContextOptions<RelayDbContext> options)
     /// <summary>Credentials for the MCP endpoint; see <see cref="McpToken"/>.</summary>
     public DbSet<McpToken> McpTokens => Set<McpToken>();
 
+    /// <summary>MCP clients that registered themselves; see <see cref="McpOAuthClient"/>.</summary>
+    public DbSet<McpOAuthClient> McpOAuthClients => Set<McpOAuthClient>();
+
+    /// <summary>Authorization codes in flight; see <see cref="McpAuthCode"/>.</summary>
+    public DbSet<McpAuthCode> McpAuthCodes => Set<McpAuthCode>();
+
     /// <summary>
     /// Everything stored is UTC, but a database does not necessarily say so on the
     /// way back: SQLite returns a DateTime with Kind Unspecified, which
@@ -60,6 +66,10 @@ internal sealed class RelayDbContext(DbContextOptions<RelayDbContext> options)
             // find, and only one of them would work.
             token.HasIndex(entity => entity.Hash).IsUnique();
         });
+
+        builder.Entity<McpOAuthClient>(client => client.HasKey(entity => entity.ClientId));
+
+        builder.Entity<McpAuthCode>(code => code.HasKey(entity => entity.Hash));
 
         builder.Entity<RelayEvent>(entry =>
         {

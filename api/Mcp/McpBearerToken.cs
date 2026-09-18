@@ -68,20 +68,25 @@ internal static class McpBearerToken
             context => context.Request.Path.StartsWithSegments(path),
             branch => branch.Use(async (context, next) =>
             {
+                // This server's canonical URI, and what an OAuth grant has to have been
+                // issued FOR. Built from the request so it is right behind the proxy
+                // that terminates TLS, exactly as the discovery documents are.
+                var resource = McpOAuth.CanonicalResource(context, path);
+
                 if (!Presented(context, out var presented))
                 {
                     await Refuse(context, StatusCodes.Status401Unauthorized,
-                        "an Authorization: Bearer token is required");
+                        "an Authorization: Bearer token is required", resource);
                     return;
                 }
 
-                if (!await tokens.VerifyAsync(presented, context.RequestAborted))
+                if (!await tokens.VerifyAsync(presented, resource, context.RequestAborted))
                 {
                     logger.LogWarning(
                         "mcp: refused a request from {Address} with a bad token",
                         context.Connection.RemoteIpAddress);
                     await Refuse(context, StatusCodes.Status401Unauthorized,
-                        "that bearer token is not valid here");
+                        "that bearer token is not valid here", resource);
                     return;
                 }
 
@@ -116,12 +121,22 @@ internal static class McpBearerToken
     /// A refusal an MCP client can read: a status, a plain sentence, and — the part
     /// that matters here — never a redirect. Being bounced to a login page is exactly
     /// what this endpoint exists to avoid.
+    ///
+    /// The 401 carries <c>resource_metadata</c> (RFC 9728 §5.1), which is not decoration:
+    /// it is the entire discovery path for a client that has no token yet. ChatGPT asks
+    /// once without one, reads this header, fetches the document it names, finds the
+    /// authorization server and starts the code flow. Without the header there is
+    /// nothing to follow and the connector simply fails.
     /// </summary>
-    private static Task Refuse(HttpContext context, int status, string reason)
+    private static Task Refuse(HttpContext context, int status, string reason, string resource)
     {
         context.Response.StatusCode = status;
         if (status == StatusCodes.Status401Unauthorized)
-            context.Response.Headers.WWWAuthenticate = "Bearer";
+        {
+            var metadata = McpOAuth.ResourceMetadataUrl(context);
+            context.Response.Headers.WWWAuthenticate =
+                $"Bearer resource_metadata=\"{metadata}\"";
+        }
         context.Response.ContentType = "text/plain";
         return context.Response.WriteAsync(reason + "\n");
     }
