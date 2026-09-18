@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text.Json;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
 namespace StruxRelay.Mcp;
@@ -57,17 +58,24 @@ internal sealed class StruxTools
 
     [McpServerTool(Name = "execute")]
     [Description(
-        "Run one command on one device and return its reply verbatim. The command is "
+        "Run one command on one device and return its reply. The command is "
         + "the two-word route exactly as 'describe' reports it — its category and its "
         + "name with a space between, such as 'system info', 'settings set' or "
         + "'led get'. Arguments are a JSON object of the argument names that command "
         + "declares; omit it for a command that takes none. The reply is the device's "
-        + "own JSON, unread and uninterpreted by the relay. This is a real device: "
+        + "own, unread and uninterpreted by the relay. This is a real device: "
         + "commands that write flash, change settings or reboot the board do exactly "
         + "that, immediately and without a confirmation step, so check the command's "
-        + "description before calling it. Commands that answer with binary data are "
-        + "not usable here, and a very long reply is cut off with a marker saying so.")]
-    public static Task<string> Execute(
+        + "description before calling it.\n\n"
+        + "Some commands take or return a BODY — file contents, an image — as bytes "
+        + "in their own right rather than as an argument, and a command's description "
+        + "says when it does. To send one, pass 'body' for text (an SVG, a config "
+        + "file) or 'bodyBase64' for arbitrary bytes. A reply that carries a body "
+        + "comes back as two parts: the device's JSON header, then the body itself — "
+        + "as text when it is text, and as an image you can look at when the device "
+        + "says it is one. A long text reply is cut off with a marker saying so; "
+        + "binary is never cut.")]
+    public static Task<CallToolResult> Execute(
         DeviceMcp mcp,
         [Description("The device's id, exactly as the 'devices' tool reported it.")]
         string deviceId,
@@ -82,6 +90,16 @@ internal sealed class StruxTools
         // still REQUIRED in the generated schema, which would oblige a caller to pass
         // "arguments": null for every command that takes none.
         Dictionary<string, JsonElement>? arguments = null,
+        [Description(
+            "A TEXT body to send with the command, for commands that take their "
+            + "payload as bytes rather than as an argument — the contents of a file "
+            + "being written, for instance. Omit unless the command's description "
+            + "says it reads a body.")]
+        string? body = null,
+        [Description(
+            "The same, for a body that is not text: arbitrary bytes, base64 encoded. "
+            + "Pass this or 'body', never both.")]
+        string? bodyBase64 = null,
         CancellationToken cancellationToken = default) =>
-        mcp.ExecuteAsync(deviceId, command, arguments, cancellationToken);
+        mcp.ExecuteAsync(deviceId, command, arguments, body, bodyBase64, cancellationToken);
 }

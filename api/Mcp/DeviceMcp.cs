@@ -1,6 +1,8 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 using StruxRelay.Data;
 using StruxRelay.Devices;
 
@@ -106,14 +108,21 @@ internal sealed class DeviceMcp(
     ///
     /// This is the same call the relay's own dashboard traffic takes — one session on
     /// the device's pipe, the arguments written into the envelope as JSON — so a
-    /// command reached this way behaves exactly as it does from a browser. The reply
-    /// is passed through as text: the relay does not know what any of it means and
-    /// does not pretend to.
+    /// command reached this way behaves exactly as it does from a browser.
+    ///
+    /// Both directions may carry a body, which is what makes the streaming half of
+    /// the command surface reachable at all: a body given here is written into the
+    /// session after the envelope, exactly where a handler's <c>lendInput</c> reads
+    /// it, and a body coming back is shaped by <see cref="DeviceReply"/> according
+    /// to the media type the DEVICE declared. The relay still does not know what any
+    /// of it means: it forwards bytes and reads one header field.
     /// </summary>
-    public async Task<string> ExecuteAsync(
+    public async Task<CallToolResult> ExecuteAsync(
         string deviceId,
         string command,
         IReadOnlyDictionary<string, JsonElement>? arguments,
+        string? body,
+        string? bodyBase64,
         CancellationToken cancellationToken)
     {
         var connection = await ConnectedAsync(deviceId, cancellationToken);
@@ -121,14 +130,18 @@ internal sealed class DeviceMcp(
         if (string.IsNullOrWhiteSpace(command))
             throw new McpException("no command given");
 
-        logger.LogInformation(
-            "mcp: {DeviceId} ← {Command} ({Arguments} argument(s))",
-            deviceId, command, arguments?.Count ?? 0);
+        var request = RequestBody(body, bodyBase64);
 
-        string reply;
+        logger.LogInformation(
+            "mcp: {DeviceId} ← {Command} ({Arguments} argument(s){Body})",
+            deviceId, command, arguments?.Count ?? 0,
+            request is null ? "" : $", {request.Value.Length}-byte body");
+
+        byte[] reply;
         try
         {
-            reply = await connection.CommandAsync(command, arguments, cancellationToken);
+            reply = await connection.CommandBytesAsync(
+                command, arguments, request, cancellationToken);
         }
         catch (RelayException exception)
         {
@@ -138,7 +151,34 @@ internal sealed class DeviceMcp(
             throw new McpException($"{command}: {exception.Message}");
         }
 
-        return Truncate(reply);
+        return new CallToolResult { Content = DeviceReply.ToContent(reply) };
+    }
+
+    /// <summary>
+    /// The request body, from whichever of the two forms the caller used.
+    ///
+    /// Two parameters rather than one plus an encoding flag, because the names
+    /// then say which is which and a model cannot pick the wrong combination.
+    /// Text is the convenient case and is what a label, a config file or any
+    /// other document uses; base64 is the escape hatch that keeps arbitrary bytes
+    /// possible. Passing both is a caller bug, not something to guess at.
+    /// </summary>
+    private static ReadOnlyMemory<byte>? RequestBody(string? body, string? bodyBase64)
+    {
+        if (body is not null && bodyBase64 is not null)
+            throw new McpException("pass either body or bodyBase64, not both");
+
+        if (body is not null) return Encoding.UTF8.GetBytes(body);
+        if (bodyBase64 is null) return null;
+
+        try
+        {
+            return Convert.FromBase64String(bodyBase64);
+        }
+        catch (FormatException)
+        {
+            throw new McpException("bodyBase64 is not valid base64");
+        }
     }
 
     /// <summary>

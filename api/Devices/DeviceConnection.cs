@@ -494,6 +494,7 @@ internal sealed class DeviceConnection
         {
             bytes = await RunSessionAsync(
                 Encoding.UTF8.GetBytes(request),
+                null,
                 $"web read {path}",
                 // A device's whole frontend lives on its own partition, so its
                 // files are already bounded by something real. No relay-side
@@ -553,11 +554,35 @@ internal sealed class DeviceConnection
         IReadOnlyDictionary<string, JsonElement>? args,
         CancellationToken cancellationToken)
     {
-        var reply = await RunSessionAsync(
-            BuildEnvelope(command, args), command, MaxCommandReply, cancellationToken);
+        var reply = await CommandBytesAsync(command, args, null, cancellationToken);
 
         return Encoding.UTF8.GetString(reply);
     }
+
+    /// <summary>
+    /// The same command, with its reply left as BYTES and an optional request
+    /// body appended after the envelope.
+    ///
+    /// It exists because a device's reply is not always text. A file read, a
+    /// rendered image and a firmware partition all come back through this one
+    /// path, and decoding them as UTF-8 does not fail — it silently replaces
+    /// every byte that is not valid UTF-8 with U+FFFD, so a PNG arrives as a PNG
+    /// shaped hole. Anything that may be handed binary asks for bytes; the
+    /// string overload above stays for the callers that know they asked a
+    /// question with a JSON answer.
+    ///
+    /// <paramref name="body"/> is written into the same session straight after
+    /// the envelope line, which is exactly what a device's handler reads with
+    /// <c>lendInput</c>. It is split across as many chunks as the device's
+    /// window needs.
+    /// </summary>
+    public Task<byte[]> CommandBytesAsync(
+        string command,
+        IReadOnlyDictionary<string, JsonElement>? args,
+        ReadOnlyMemory<byte>? body,
+        CancellationToken cancellationToken) =>
+        RunSessionAsync(
+            BuildEnvelope(command, args), body, command, MaxCommandReply, cancellationToken);
 
     /// <summary>
     /// The envelope line: <c>{"type":"&lt;command&gt;", …args}</c> plus a newline. The
@@ -612,7 +637,8 @@ internal sealed class DeviceConnection
     /// silent about.
     /// </summary>
     private async Task<byte[]> RunSessionAsync(
-        byte[] request, string what, int maxBytes, CancellationToken cancellationToken)
+        byte[] request, ReadOnlyMemory<byte>? requestBody, string what, int maxBytes,
+        CancellationToken cancellationToken)
     {
         var channel = Channel.CreateUnbounded<Chunk>();
         ushort session;
@@ -626,7 +652,7 @@ internal sealed class DeviceConnection
         var body = new ArrayBufferWriter<byte>();
         try
         {
-            await SendAsync(session, SessionChunk.FlagFinal, request, cancellationToken);
+            await SendRequestAsync(session, request, requestBody, cancellationToken);
 
             while (true)
             {
@@ -671,6 +697,69 @@ internal sealed class DeviceConnection
         return body.WrittenSpan.ToArray();
     }
 
+
+    /// <summary>
+    /// Writes one request into a session: the envelope line, then the body, in
+    /// as many chunks as the device's window needs, FINAL on the last.
+    ///
+    /// The device has always been able to READ a request this way — its Session
+    /// pulls further chunks off the link until one carries FINAL, which is how
+    /// a browser has uploaded firmware all along. The relay was the half that
+    /// could only ever send one chunk, which is why a command taking a body was
+    /// reachable from a browser and not from here.
+    ///
+    /// The envelope is never split: it is capped well under the window by
+    /// BuildEnvelope, and a device routes a request by finding the newline in
+    /// its FIRST chunk. The body is split freely — it is a byte stream to the
+    /// handler, and a chunk boundary inside it means nothing.
+    /// </summary>
+    private async Task SendRequestAsync(
+        ushort session, byte[] envelope, ReadOnlyMemory<byte>? requestBody,
+        CancellationToken cancellationToken)
+    {
+        var bodyBytes = requestBody ?? ReadOnlyMemory<byte>.Empty;
+
+        // No body: one chunk, exactly as before. Worth keeping as its own case
+        // so the overwhelmingly common command costs no extra send.
+        if (bodyBytes.IsEmpty)
+        {
+            await SendAsync(session, SessionChunk.FlagFinal, envelope, cancellationToken);
+            return;
+        }
+
+        // The envelope shares its chunk with as much of the body as fits, so a
+        // small file is still a single frame.
+        var firstBodyChunk = Math.Min(
+            bodyBytes.Length, SessionChunk.MaxPayload - envelope.Length);
+
+        var first = new byte[envelope.Length + firstBodyChunk];
+        envelope.CopyTo(first, 0);
+        bodyBytes[..firstBodyChunk].Span.CopyTo(first.AsSpan(envelope.Length));
+
+        var remaining = bodyBytes[firstBodyChunk..];
+        await SendAsync(
+            session,
+            remaining.IsEmpty ? SessionChunk.FlagFinal : (byte)0,
+            first,
+            cancellationToken);
+
+        while (!remaining.IsEmpty)
+        {
+            var take = Math.Min(remaining.Length, SessionChunk.MaxPayload);
+            var chunk = remaining[..take];
+            remaining = remaining[take..];
+
+            // FINAL is what EOFs the handler's read loop, so it goes on the last
+            // chunk and nowhere else. Sending it early truncates the upload; not
+            // sending it at all wedges the handler until the device's own
+            // receive timeout.
+            await SendAsync(
+                session,
+                remaining.IsEmpty ? SessionChunk.FlagFinal : (byte)0,
+                chunk,
+                cancellationToken);
+        }
+    }
 
     /// <summary>
     /// Next free id in the relay's half of the space, wrapping. Called under the
