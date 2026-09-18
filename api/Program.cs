@@ -97,12 +97,18 @@ var app = builder.Build();
 // docker network whose address is not knowable here. That is safe for exactly one
 // reason: this port is not reachable except through that proxy. A deployment that
 // publishes it directly must set Relay:PublicUrl instead.
-app.UseForwardedHeaders(new ForwardedHeadersOptions
+var forwarded = new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost,
-    KnownNetworks = { },
-    KnownProxies = { },
-});
+};
+// Cleared with a method call, NOT with `KnownNetworks = { }` in the initializer above:
+// a collection initializer ADDS to the collection, so that spelling silently leaves the
+// loopback-only default in place and every forwarded header is ignored. The symptom is
+// an OAuth discovery document advertising http:// from behind a TLS proxy, which reads
+// as a configuration problem in the proxy and is not one.
+forwarded.KnownNetworks.Clear();
+forwarded.KnownProxies.Clear();
+app.UseForwardedHeaders(forwarded);
 
 await RelayDatabase.MigrateAsync(app.Services, app.Logger);
 
