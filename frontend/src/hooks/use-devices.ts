@@ -35,6 +35,14 @@ export type Device = {
    * facts it has never heard of.
    */
   details: Record<string, string> | null
+  /** The one-line description the firmware reports about itself, when it reports one. */
+  description: string | null
+  /**
+   * Whether an AI agent talking to this relay over MCP can see this device and run
+   * its commands. Relay state, not something the device said — approving a device
+   * lets a person drive it, this lets a model.
+   */
+  mcpExposed: boolean
 }
 
 /**
@@ -103,7 +111,31 @@ export function useDevices() {
     [invoke]
   )
 
-  return { devices, loading, approve, forget }
+  const setMcpExposure = useCallback(
+    async (device: Device, exposed: boolean) => {
+      try {
+        const result = await invoke<{
+          ok: boolean
+          exposed: boolean
+          error: string | null
+        }>("SetMcpExposure", device.deviceId, exposed)
+        if (!result.ok) {
+          toast.error(result.error ?? "Could not change MCP exposure.")
+          return
+        }
+        toast.success(
+          exposed
+            ? `${device.name || device.deviceId} is now reachable over MCP.`
+            : `${device.name || device.deviceId} is no longer reachable over MCP.`
+        )
+      } catch {
+        toast.error("Could not reach the relay.")
+      }
+    },
+    [invoke]
+  )
+
+  return { devices, loading, approve, forget, setMcpExposure }
 }
 
 export type DeviceList = ReturnType<typeof useDevices>

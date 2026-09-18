@@ -65,4 +65,15 @@ internal sealed record DeviceView(
     /// what it gets and the dashboard shows what it understands, so a firmware that
     /// learns to report one more fact needs no change on this side at all.
     /// </summary>
-    IReadOnlyDictionary<string, string>? Details = null);
+    IReadOnlyDictionary<string, string>? Details = null,
+    /// <summary>
+    /// The one-line description the firmware reports in its hello, when it reports
+    /// one. What the device IS, in its own words rather than in a name somebody typed.
+    /// </summary>
+    string? Description = null,
+    /// <summary>
+    /// Whether this device is reachable through the relay's MCP surface. Relay state,
+    /// not something the device said — see <see cref="Data.ApprovedDevice.McpExposed"/>.
+    /// Always false for a pending device: there is nothing to expose until it is let in.
+    /// </summary>
+    bool McpExposed = false);

@@ -35,6 +35,22 @@ internal sealed class ApprovedDevice
     public DateTime ApprovedAt { get; set; }
 
     public DateTime? LastSeen { get; set; }
+
+    /// <summary>
+    /// Whether this device is reachable through the relay's MCP surface.
+    ///
+    /// The relay is the trust boundary, so this is RELAY state and not something a
+    /// device says about itself: a board cannot volunteer itself to an agent by
+    /// reporting a flag. Off by default, including for devices approved before this
+    /// column existed — approving a device lets a person drive it, which is not the
+    /// same decision as letting a model drive it.
+    ///
+    /// Deliberately one boolean. Read/write/destructive tiers, per-command rules and
+    /// a policy engine were all considered and left out: the relay does not know what
+    /// any command means, so any tier it invented would be a guess about somebody
+    /// else's firmware.
+    /// </summary>
+    public bool McpExposed { get; set; }
 }
 
 /// <summary>

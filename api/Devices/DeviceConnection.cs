@@ -553,46 +553,8 @@ internal sealed class DeviceConnection
         IReadOnlyDictionary<string, JsonElement>? args,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(command))
-            throw new RelayException("no command given");
-
-        var envelope = new ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(envelope))
-        {
-            writer.WriteStartObject();
-            writer.WriteString("type", command);
-
-            if (args is not null)
-                foreach (var (name, value) in args)
-                {
-                    // The route is the command, not an argument. A caller passing
-                    // `type` in the args would otherwise emit it twice and the
-                    // device would read whichever came last — silently dispatching
-                    // something other than what was asked for.
-                    if (name == "type")
-                        continue;
-
-                    writer.WritePropertyName(name);
-                    value.WriteTo(writer);
-                }
-
-            writer.WriteEndObject();
-        }
-
-        var request = new byte[envelope.WrittenCount + 1];
-        envelope.WrittenSpan.CopyTo(request);
-        request[^1] = (byte)'\n';
-
-        // The device refuses an oversized frame rather than splitting it, so an
-        // envelope that does not fit has to fail here with a reason a caller can
-        // act on instead of as a silent non-answer.
-        if (request.Length > SessionChunk.MaxPayload)
-            throw new RelayException(
-                $"'{command}' arguments are {request.Length} bytes, over the device's "
-                + $"{SessionChunk.MaxPayload}-byte window");
-
         var reply = await RunSessionAsync(
-            request, command, MaxCommandReply, cancellationToken);
+            BuildEnvelope(command, args), command, MaxCommandReply, cancellationToken);
 
         return Encoding.UTF8.GetString(reply);
     }

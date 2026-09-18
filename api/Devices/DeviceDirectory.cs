@@ -53,7 +53,9 @@ internal sealed class DeviceDirectory(PairingStore pairing, DeviceRegistry regis
                 Token: null,
                 Attempts: null,
                 Commit: NullIfEmpty(live?.Commit ?? device.Commit),
-                Details: hello.Rest));
+                Details: hello.Rest,
+                Description: NullIfEmpty(hello.Description),
+                McpExposed: device.McpExposed));
         }
 
         foreach (var device in state.Pending)
@@ -77,7 +79,11 @@ internal sealed class DeviceDirectory(PairingStore pairing, DeviceRegistry regis
                 // A pending device has said nothing the relay is willing to repeat: it
                 // is refused before the upgrade, so there is no socket for a hello.
                 Commit: null,
-                Details: null));
+                Details: null,
+                Description: null,
+                // Nothing to expose: a device that may not connect cannot be reached
+                // by anything, MCP included.
+                McpExposed: false));
         }
 
         // Pending first — they are the rows that want a decision — then by name,

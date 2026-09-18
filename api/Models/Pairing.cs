@@ -43,7 +43,9 @@ internal sealed record ApprovedDeviceView(
     /// <summary>The device's last hello as stored JSON; see <see cref="DeviceHello"/>.</summary>
     string Hello,
     DateTime ApprovedAt,
-    DateTime? LastSeen);
+    DateTime? LastSeen,
+    /// <summary>Whether this device is reachable through the relay's MCP surface.</summary>
+    bool McpExposed = false);
 
 internal sealed record RelayEventView(
     long Id,
@@ -66,5 +68,8 @@ internal sealed record ConnectDecision(bool Allowed, string Reason)
 }
 
 internal sealed record ApproveResult(bool Ok, string? Error = null);
+
+/// <summary>The result of flipping a device's MCP exposure.</summary>
+internal sealed record McpExposureResult(bool Ok, bool Exposed, string? Error = null);
 
 internal sealed record ForgetResult(bool Ok, bool WasApproved);

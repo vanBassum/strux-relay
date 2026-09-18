@@ -8,6 +8,7 @@ device  ──ws──►  /device?id=<id>&fw=<ver>     outbound, NAT-friendly
 browser ──ws──►  /hub                         the dashboard's own API (SignalR)
 browser ──ws──►  /devices/<id>/ws             relayed onto the device pipe
 browser ──http─►  /devices/<id>/{path}        → `web read`, served from cache
+agent   ──http─►  /mcp                         three generic tools over any device
 ```
 
 ASP.NET Core on .NET 10, with a React + shadcn/ui dashboard. It replaced a
@@ -208,7 +209,8 @@ to string values, all optional, no fixed schema.
 ```json
 { "type": "relay hello",
   "fw": "0.1.0", "commit": "c538fc6", "project": "DPS50xx",
-  "name": "Bench supply", "idf": "6.0.0", "built": "2026-09-15T10:22:00Z" }
+  "name": "Bench supply", "desc": "Bench power supply, 0-50 V / 0-5 A",
+  "idf": "6.0.0", "built": "2026-09-15T10:22:00Z" }
 ```
 
 It rides its own reserved session (`0xFFFE`, beside telemetry's `0xFFFF`), so the relay
@@ -236,6 +238,54 @@ decision gets made on.
 board in the field that has not been reflashed keeps filling in a device list. A device
 that sends a hello leaves them off entirely, and the hello wins. The fallback goes once
 the fleet has moved.
+
+## MCP: an agent drives a device
+
+The relay speaks [MCP](https://modelcontextprotocol.io) at **`/mcp`** (streamable HTTP,
+stateless). Point an MCP client at it:
+
+```jsonc
+{ "mcpServers": { "strux": { "type": "http", "url": "https://relay.example/mcp" } } }
+```
+
+Three tools, and deliberately only three:
+
+| tool | what it does |
+| --- | --- |
+| `devices` | the devices that are approved, exposed and connected right now — id, name, project, firmware, and the one-line description the firmware reports |
+| `describe` | one device's own instructions plus every command it has, each with a description and its full argument list (name, type, required, meaning) |
+| `execute` | run any of those commands with arguments, and return the device's reply verbatim |
+
+**There is no tool per device command, and that is the design.** A Strux device already
+describes itself — `help describe` returns its whole command registry, arguments
+included, generated from the handlers themselves rather than from a table somebody
+maintains — so discovery is progressive and lives on the device. A relay that published
+a tool per command would hold a copy of every device's surface, regenerated every time
+somebody flashes a board, and would know what a labelwriter is. It does not, and nothing
+here needs changing when a firmware grows a command or when a new kind of product
+appears.
+
+The device's part of the bargain: a command carries a one-line description and describes
+each argument; the product carries a short description (in the hello) and free-form
+instructions (served by `system describe`) explaining how it is meant to be driven. All
+of it ships with the firmware, so what an agent reads always matches the build that is
+answering.
+
+**Exposure is per device and off by default.** The relay is the trust boundary, so a
+board cannot volunteer itself: an operator flips *Expose to MCP* on the device's row in
+the dashboard, and the row then shows an MCP marker. A device that is not exposed does
+not appear in `devices` and is refused by name to anything that asks for it directly —
+the same message as an id that does not exist, because whether an id exists is not
+something an MCP client has been given the right to find out.
+
+One boolean, and no more: no read/write/destructive tiers, no per-command rules, no
+policy engine. The relay does not know what any command means, so any tier it invented
+would be a guess about somebody else's firmware. What a command does to a device is the
+device's own description to give, and whether a model may drive that board at all is the
+operator's switch.
+
+**Auth is the proxy's, as everywhere else on the human side.** `/mcp` sits with the
+dashboard, behind whatever authenticates people — there is no separate MCP token yet.
 
 ## A device opens its own UI
 

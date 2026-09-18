@@ -71,6 +71,20 @@ internal sealed class RelayHub(
         pairing.ApproveAsync(deviceId, token, Context.ConnectionAborted);
 
     /// <summary>
+    /// Turn a device's MCP exposure on or off — whether an AI agent talking to this
+    /// relay can see it and run its commands.
+    ///
+    /// A separate decision from approval, taken in that order: approving a device
+    /// lets a PERSON drive it, and this lets a MODEL. Off for every device until
+    /// somebody says otherwise, including devices approved before the switch existed.
+    ///
+    /// Nothing is sent to the device. It has no idea this flag exists, which is the
+    /// point — the relay is the trust boundary, so a board cannot volunteer itself.
+    /// </summary>
+    public Task<McpExposureResult> SetMcpExposure(string deviceId, bool exposed) =>
+        pairing.SetMcpExposureAsync(deviceId, exposed, Context.ConnectionAborted);
+
+    /// <summary>
     /// Revoke a device: its approval, its pending rows, and its live pipe. The last
     /// one matters — the token is only checked when a connection is made, so a
     /// revoked device would otherwise stay connected until it happened to drop.

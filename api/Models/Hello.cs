@@ -47,6 +47,15 @@ internal sealed record DeviceHello(IReadOnlyDictionary<string, string> Values)
     /// </summary>
     public string? Ip => Value("ip");
 
+    /// <summary>
+    /// One line saying what this device IS, written by the firmware that is running
+    /// on it. Short by construction — it shares the hello's one chunk with everything
+    /// else the device says — so it answers "which board is this" and nothing more.
+    /// The long form (how to drive it) is not here: it is served by the device's
+    /// <c>system describe</c> command, on demand.
+    /// </summary>
+    public string? Description => Value("desc");
+
     private string? Value(string key) =>
         Values.TryGetValue(key, out var value) && value.Length > 0 ? value : null;
 
@@ -61,7 +70,7 @@ internal sealed record DeviceHello(IReadOnlyDictionary<string, string> Values)
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
 
     private static readonly HashSet<string> Understood =
-        new(StringComparer.Ordinal) { "fw", "commit", "name", "project", "ip" };
+        new(StringComparer.Ordinal) { "fw", "commit", "name", "project", "ip", "desc" };
 
     /// <summary>
     /// Parses one hello payload. Returns null for anything that is not a flat JSON

@@ -10,6 +10,7 @@ import {
   EllipsisIcon,
   ExternalLinkIcon,
   SearchIcon,
+  SparklesIcon,
   Trash2Icon,
 } from "lucide-react"
 
@@ -101,7 +102,7 @@ export function DevicesPage({
   /** Passed in rather than fetched here: App owns the one copy of it. */
   devices: DeviceList
 }) {
-  const { devices, loading, approve, forget } = list
+  const { devices, loading, approve, forget, setMcpExposure } = list
 
   // Relative times are rendered, not stored, so something has to re-render them.
   useNow()
@@ -216,6 +217,7 @@ export function DevicesPage({
                   device={device}
                   onApprove={approve}
                   onForget={forget}
+                  onSetMcpExposure={setMcpExposure}
                 />
               ))
             )}
@@ -275,10 +277,12 @@ function DeviceRow({
   device,
   onApprove,
   onForget,
+  onSetMcpExposure,
 }: {
   device: Device
   onApprove: (device: Device) => Promise<void>
   onForget: (device: Device) => Promise<void>
+  onSetMcpExposure: (device: Device, exposed: boolean) => Promise<void>
 }) {
   const online = device.connection === "online"
   const href = deviceUiUrl(device.deviceId)
@@ -340,6 +344,15 @@ function DeviceRow({
         <div className="text-muted-foreground font-mono text-xs">
           {device.deviceId}
         </div>
+        {/* The device's own one-line description of itself, when its firmware
+            reports one. Under the id rather than in a column: it is a sentence, it
+            is not sortable, and most of the time it is the same for every board of
+            a fleet — so it belongs where it can be skimmed past. */}
+        {device.description && (
+          <div className="text-muted-foreground mt-0.5 max-w-sm truncate text-xs" title={device.description}>
+            {device.description}
+          </div>
+        )}
       </TableCell>
 
       {/* What it runs: which product, and which build of it. Mono underneath because
@@ -420,6 +433,17 @@ function DeviceRow({
 
       <TableCell className="font-mono text-xs">
         {device.address ?? "—"}
+        {/* Exposure is only ever ON deliberately, so the row says so only then —
+            an "MCP off" marker on every row would be noise about a default. */}
+        {device.mcpExposed && (
+          <div
+            className="text-muted-foreground mt-1 flex items-center gap-1 font-sans"
+            title="An AI agent connected to this relay can see this device and run its commands"
+          >
+            <SparklesIcon className="size-3" />
+            MCP
+          </div>
+        )}
       </TableCell>
 
       <TableCell className="text-right">
@@ -494,6 +518,23 @@ function DeviceRow({
                   <ExternalLinkIcon />
                   Open device UI
                 </DropdownMenuItem>
+              )}
+
+              {/* Only for an approved device, because exposure is the SECOND
+                  decision and it is stored on the approval: there is no row to set
+                  it on until the first one has been made. */}
+              {device.approval === "approved" && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() =>
+                      void onSetMcpExposure(device, !device.mcpExposed)
+                    }
+                  >
+                    <SparklesIcon />
+                    {device.mcpExposed ? "Hide from MCP" : "Expose to MCP"}
+                  </DropdownMenuItem>
+                </>
               )}
 
               <DropdownMenuSeparator />

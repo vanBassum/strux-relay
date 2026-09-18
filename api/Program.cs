@@ -1,9 +1,12 @@
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using ModelContextProtocol.Protocol;
 using StruxRelay.Cache;
 using StruxRelay.Data;
 using StruxRelay.Devices;
 using StruxRelay.Hubs;
+using StruxRelay.Mcp;
 using StruxRelay.Telemetry;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -51,6 +54,23 @@ builder.Services.AddHttpClient(nameof(InfluxTelemetrySink));
 // with nothing in the router or the hub to change.
 builder.Services.AddSingleton<ITelemetrySink, InfluxTelemetrySink>();
 
+// The MCP surface: three generic tools over the pipes the registry already holds.
+// Stateless HTTP, so an MCP client can call it without keeping a session — and one
+// less thing to hold per connection on a server whose job is holding connections.
+//
+// It is mapped beside the dashboard rather than beside /device, and that placement
+// IS the security model: in production everything but /device sits behind the
+// reverse proxy that authenticates people, so reaching /mcp means having got past
+// it. The per-device switch is the second half — see ApprovedDevice.McpExposed.
+builder.Services.AddSingleton<DeviceMcp>();
+builder.Services.AddMcpServer(options => options.ServerInfo = new Implementation
+    {
+        Name = "strux-relay",
+        Version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0",
+    })
+    .WithHttpTransport(options => options.Stateless = true)
+    .WithTools<StruxTools>();
+
 // One instance, two roles: the pipe ingests into it and the host runs its flush
 // loop, so it is registered as itself and then handed to AddHostedService rather
 // than constructed twice.
@@ -83,6 +103,11 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 app.MapHub<RelayHub>("/hub");
+
+// The MCP endpoint. Mapped before the SPA fallback for the same reason /device is:
+// without a route here an MCP client's POST would be answered with index.html and a
+// 200, which is a failure that names the wrong cause.
+app.MapMcp("/mcp");
 
 // The device's outbound pipe. Mapped BEFORE the SPA fallback, and the reason is
 // not style: without a route here the fallback answered a device's upgrade request

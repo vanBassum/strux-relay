@@ -253,7 +253,8 @@ internal sealed class PairingStore(
                 .OrderBy(device => device.DeviceId)
                 .Select(device => new ApprovedDeviceView(
                     device.DeviceId, device.Name, device.Project, device.Firmware,
-                    device.Commit, device.Hello, device.ApprovedAt, device.LastSeen))
+                    device.Commit, device.Hello, device.ApprovedAt, device.LastSeen,
+                    device.McpExposed))
                 .ToListAsync(cancellationToken),
             await database.Events
                 .OrderByDescending(entry => entry.At)
@@ -313,6 +314,76 @@ internal sealed class PairingStore(
         logger.LogInformation("approved device {DeviceId}", deviceId);
         await AnnounceAsync();
         return new ApproveResult(true);
+    }
+
+    /// <summary>
+    /// Turn this device's MCP exposure on or off.
+    ///
+    /// Only an APPROVED device can be exposed, and that ordering is the point: being
+    /// let onto the relay and being reachable by a model are two decisions, taken in
+    /// that order, by the same person. A pending device has no row to set the flag on,
+    /// which is the right answer rather than a missing case.
+    /// </summary>
+    public async Task<McpExposureResult> SetMcpExposureAsync(
+        string deviceId, bool exposed, CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var database = await contexts.CreateDbContextAsync(cancellationToken);
+
+            var approved = await database.Approved.FirstOrDefaultAsync(
+                device => device.DeviceId == deviceId, cancellationToken);
+            if (approved is null)
+                return new McpExposureResult(false, false, "no such approved device");
+
+            if (approved.McpExposed == exposed)
+                return new McpExposureResult(true, exposed);
+
+            approved.McpExposed = exposed;
+            await database.SaveChangesAsync(cancellationToken);
+
+            // In the event log beside approvals and removals, because it is the same
+            // kind of fact: a person decided something about this device that the
+            // device cannot decide for itself.
+            await LogEventAsync(database, exposed ? "mcp-exposed" : "mcp-hidden",
+                deviceId, "", cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        logger.LogInformation(
+            "device {DeviceId} is {State} through MCP", deviceId,
+            exposed ? "now reachable" : "no longer reachable");
+        await AnnounceAsync();
+        return new McpExposureResult(true, exposed);
+    }
+
+    /// <summary>
+    /// Is this device approved AND exposed to MCP — the one question the MCP surface
+    /// asks before doing anything at all. Read from the database on every call rather
+    /// than cached: turning a device off has to take effect on the next tool call, not
+    /// whenever something happens to invalidate a cache.
+    /// </summary>
+    public async Task<bool> IsMcpExposedAsync(
+        string deviceId, CancellationToken cancellationToken = default)
+    {
+        await using var database = await contexts.CreateDbContextAsync(cancellationToken);
+        return await database.Approved.AnyAsync(
+            device => device.DeviceId == deviceId && device.McpExposed, cancellationToken);
+    }
+
+    /// <summary>Every approved device id that is exposed to MCP.</summary>
+    public async Task<IReadOnlyCollection<string>> McpExposedIdsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var database = await contexts.CreateDbContextAsync(cancellationToken);
+        return await database.Approved
+            .Where(device => device.McpExposed)
+            .Select(device => device.DeviceId)
+            .ToListAsync(cancellationToken);
     }
 
     public async Task<ForgetResult> ForgetAsync(
