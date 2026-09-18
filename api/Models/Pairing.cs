@@ -69,6 +69,40 @@ internal sealed record ConnectDecision(bool Allowed, string Reason)
 
 internal sealed record ApproveResult(bool Ok, string? Error = null);
 
+/// <summary>One MCP credential, as the dashboard sees it: never the token itself.</summary>
+internal sealed record McpTokenView(
+    string Id,
+    string Name,
+    /// <summary>The token's first few characters — enough to match a row against a
+    /// config file, not enough to be a credential.</summary>
+    string Hint,
+    DateTime CreatedAt,
+    DateTime? LastUsedAt,
+    DateTime? RevokedAt);
+
+/// <summary>
+/// Everything the MCP page draws. <see cref="Enabled"/> is what the endpoint will
+/// actually DO rather than what is configured: with no credential of any kind it
+/// refuses every request, and the page says so instead of leaving somebody to work it
+/// out from a 503.
+/// </summary>
+internal sealed record McpView(
+    bool Enabled,
+    bool DeploymentTokenConfigured,
+    IReadOnlyList<McpTokenView> Tokens);
+
+/// <summary>
+/// A freshly minted token, and the one time its <see cref="Token"/> is ever readable:
+/// the relay keeps only a hash, so there is nothing to show again later.
+/// </summary>
+internal sealed record McpTokenCreated(
+    bool Ok,
+    string? Token,
+    McpTokenView? Created,
+    string? Error = null);
+
+internal sealed record McpTokenResult(bool Ok, string? Error = null);
+
 /// <summary>The result of flipping a device's MCP exposure.</summary>
 internal sealed record McpExposureResult(bool Ok, bool Exposed, string? Error = null);
 

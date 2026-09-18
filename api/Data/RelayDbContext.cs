@@ -28,6 +28,9 @@ internal sealed class RelayDbContext(DbContextOptions<RelayDbContext> options)
 
     public DbSet<RelayEvent> Events => Set<RelayEvent>();
 
+    /// <summary>Credentials for the MCP endpoint; see <see cref="McpToken"/>.</summary>
+    public DbSet<McpToken> McpTokens => Set<McpToken>();
+
     /// <summary>
     /// Everything stored is UTC, but a database does not necessarily say so on the
     /// way back: SQLite returns a DateTime with Kind Unspecified, which
@@ -48,6 +51,15 @@ internal sealed class RelayDbContext(DbContextOptions<RelayDbContext> options)
         // The composite key is the point of this table; see PendingDevice.
         builder.Entity<PendingDevice>(device =>
             device.HasKey(entity => new { entity.DeviceId, entity.Token }));
+
+        builder.Entity<McpToken>(token =>
+        {
+            token.HasKey(entity => entity.Id);
+            // Every MCP request looks a token up by hash, and two rows must never
+            // share one: the same secret issued twice would be two revocations to
+            // find, and only one of them would work.
+            token.HasIndex(entity => entity.Hash).IsUnique();
+        });
 
         builder.Entity<RelayEvent>(entry =>
         {

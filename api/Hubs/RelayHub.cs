@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.SignalR;
 using StruxRelay.Cache;
 using StruxRelay.Data;
 using StruxRelay.Devices;
+using StruxRelay.Mcp;
 using StruxRelay.Models;
 using StruxRelay.Telemetry;
 
@@ -26,6 +27,7 @@ namespace StruxRelay.Hubs;
 /// </summary>
 internal sealed class RelayHub(
     PairingStore pairing,
+    McpTokenStore mcpTokens,
     DeviceDirectory directory,
     DeviceRegistry registry,
     TelemetryRouter telemetry,
@@ -120,6 +122,32 @@ internal sealed class RelayHub(
 
     public Task UnsubscribeTelemetry() =>
         Groups.RemoveFromGroupAsync(Context.ConnectionId, TelemetryGroup);
+
+    // ── MCP credentials ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The MCP endpoint's state and its tokens. Never a token itself: the relay keeps
+    /// only hashes, so there is nothing here that could be shown twice.
+    /// </summary>
+    public Task<McpView> GetMcp() => mcpTokens.ViewAsync(Context.ConnectionAborted);
+
+    /// <summary>
+    /// Mints a token and returns it ONCE. This is the only moment the value exists
+    /// outside the caller's config file, which is why the page makes a point of it.
+    /// </summary>
+    public Task<McpTokenCreated> CreateMcpToken(string name) =>
+        mcpTokens.CreateAsync(name, Context.ConnectionAborted);
+
+    /// <summary>
+    /// Stops a token working, immediately — the next request carrying it is refused,
+    /// because every request is checked rather than a session being established.
+    /// </summary>
+    public Task<McpTokenResult> RevokeMcpToken(string id) =>
+        mcpTokens.RevokeAsync(id, Context.ConnectionAborted);
+
+    /// <summary>Removes a revoked token's row for good.</summary>
+    public Task<McpTokenResult> ForgetMcpToken(string id) =>
+        mcpTokens.ForgetAsync(id, Context.ConnectionAborted);
 
     // ── the frontend cache ────────────────────────────────────────────────────
 

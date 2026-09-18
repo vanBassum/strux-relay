@@ -1,10 +1,7 @@
-using System.Security.Cryptography;
-using System.Text;
-
 namespace StruxRelay.Mcp;
 
 /// <summary>
-/// The one machine credential that guards <c>/mcp</c>.
+/// Where the deployment's own MCP credential comes from.
 ///
 /// Every other browser-facing path on this host sits behind the reverse proxy's
 /// forward-auth, which answers an unauthenticated request with a REDIRECT to a login
@@ -14,10 +11,12 @@ namespace StruxRelay.Mcp;
 /// in the process that owns the thing being protected, rather than in a label on a
 /// container.
 ///
-/// Deliberately ONE token, and no user model behind it. There are no accounts, scopes,
-/// refresh tokens or OAuth here, because there is nothing for them to describe: the
-/// question this answers is "is this the machine we gave the credential to", and WHICH
-/// devices it may then reach is a different boundary entirely (see
+/// This one comes from configuration, which is what makes it the credential that works
+/// before anybody has opened the dashboard. Tokens issued FROM the dashboard live in
+/// the database beside it (see <see cref="McpTokenStore"/>); both answer the same
+/// question, and it is a small one — "is this a machine we gave a credential to".
+/// There are no accounts, scopes, refresh tokens or OAuth behind it, because WHICH
+/// devices that machine may then reach is a different boundary entirely (see
 /// <see cref="Data.ApprovedDevice.McpExposed"/>). Two simple gates in series beat one
 /// elaborate one.
 /// </summary>
@@ -37,7 +36,10 @@ internal sealed class McpOptions
 internal static class McpBearerToken
 {
     /// <summary>
-    /// Requires a bearer token on every request under <paramref name="path"/>.
+    /// Requires a valid bearer token on every request under <paramref name="path"/> —
+    /// the deployment's, or one issued from the dashboard. With neither configured
+    /// nor issued, nothing verifies and every request is refused, which is the right
+    /// way round: an unset secret must not publish a device-driving API by omission.
     ///
     /// MIDDLEWARE on the whole prefix, not a filter on one endpoint, and that is the
     /// point: streamable HTTP is several requests — the POST that carries a call, the
@@ -50,38 +52,22 @@ internal static class McpBearerToken
     /// </summary>
     public static WebApplication UseMcpBearerToken(this WebApplication app, string path)
     {
-        var token = app.Configuration[$"{McpOptions.Section}:Token"] ?? "";
         var logger = app.Services.GetRequiredService<ILoggerFactory>()
             .CreateLogger(typeof(McpBearerToken).FullName!);
+        var tokens = app.Services.GetRequiredService<McpTokenStore>();
 
-        if (token.Length == 0)
-        {
-            // Closed, not open. A deployment that forgot the secret gets an endpoint
-            // that refuses everything and says why, rather than a device-driving API
-            // published to the internet by omission — which is the failure mode worth
-            // designing against, because nothing about it looks wrong from outside.
-            logger.LogWarning(
-                "MCP is unconfigured: no Relay__Mcp__Token, so {Path} refuses every "
-                + "request. Set the token to enable it.", path);
-        }
-        else
-        {
-            logger.LogInformation("MCP bearer token is configured; {Path} is open to it", path);
-        }
-
-        var expected = Encoding.UTF8.GetBytes(token);
+        logger.LogInformation(
+            "MCP is guarded at {Path}: {Deployment}, plus any token issued from the "
+            + "dashboard. With none of either it refuses every request.",
+            path,
+            tokens.DeploymentToken.Length > 0
+                ? "a deployment token is configured"
+                : "no deployment token (Relay__Mcp__Token is unset)");
 
         app.UseWhen(
             context => context.Request.Path.StartsWithSegments(path),
             branch => branch.Use(async (context, next) =>
             {
-                if (expected.Length == 0)
-                {
-                    await Refuse(context, StatusCodes.Status503ServiceUnavailable,
-                        "MCP is not configured on this relay");
-                    return;
-                }
-
                 if (!Presented(context, out var presented))
                 {
                     await Refuse(context, StatusCodes.Status401Unauthorized,
@@ -89,10 +75,7 @@ internal static class McpBearerToken
                     return;
                 }
 
-                // Constant time, for the same reason the device token is compared that
-                // way: how long a mismatch takes is the one thing a wrong answer would
-                // otherwise tell somebody guessing.
-                if (!CryptographicOperations.FixedTimeEquals(expected, presented))
+                if (!await tokens.VerifyAsync(presented, context.RequestAborted))
                 {
                     logger.LogWarning(
                         "mcp: refused a request from {Address} with a bad token",
@@ -109,12 +92,12 @@ internal static class McpBearerToken
     }
 
     /// <summary>
-    /// The presented token's bytes, or false when the header is absent or is not a
-    /// bearer one. Case-insensitive on the scheme, because RFC 7235 says it is.
+    /// The presented token, or false when the header is absent or is not a bearer one.
+    /// Case-insensitive on the scheme, because RFC 7235 says it is.
     /// </summary>
-    private static bool Presented(HttpContext context, out byte[] token)
+    private static bool Presented(HttpContext context, out string token)
     {
-        token = [];
+        token = "";
 
         var header = context.Request.Headers.Authorization.ToString();
         const string scheme = "Bearer ";
@@ -125,7 +108,7 @@ internal static class McpBearerToken
         if (value.Length == 0)
             return false;
 
-        token = Encoding.UTF8.GetBytes(value);
+        token = value;
         return true;
     }
 

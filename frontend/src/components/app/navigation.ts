@@ -2,10 +2,11 @@ import {
   ChartColumnIcon,
   DatabaseIcon,
   HardDriveIcon,
+  SparklesIcon,
   type LucideIcon,
 } from "lucide-react"
 
-export type RelayPage = "devices" | "telemetry" | "cache"
+export type RelayPage = "devices" | "telemetry" | "cache" | "mcp"
 
 /**
  * Navigation the relay owns.
@@ -19,6 +20,7 @@ export const RELAY_PAGES: { id: RelayPage; label: string; icon: LucideIcon }[] =
   { id: "devices", label: "Devices", icon: HardDriveIcon },
   { id: "telemetry", label: "Telemetry", icon: ChartColumnIcon },
   { id: "cache", label: "Cache", icon: DatabaseIcon },
+  { id: "mcp", label: "MCP", icon: SparklesIcon },
 ]
 
 // Note what is NOT here any more: a `View` union, and a device page's default id.

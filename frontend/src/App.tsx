@@ -3,6 +3,7 @@ import { AppTopbar } from "@/components/app/app-topbar"
 import { DevicesPage } from "@/components/app/devices-page"
 import { RELAY_PAGES } from "@/components/app/navigation"
 import { CachePage } from "@/components/app/cache-page"
+import { McpPage } from "@/components/app/mcp-page"
 import { TelemetryPage } from "@/components/app/telemetry-page"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
@@ -54,6 +55,8 @@ function Workspace() {
             <TelemetryPage />
           ) : page === "cache" ? (
             <CachePage />
+          ) : page === "mcp" ? (
+            <McpPage />
           ) : (
             <DevicesPage devices={devices} />
           )}

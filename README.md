@@ -292,7 +292,7 @@ would be a guess about somebody else's firmware. What a command does to a device
 device's own description to give, and whether a model may drive that board at all is the
 operator's switch.
 
-### Getting in: one bearer token
+### Getting in: bearer tokens
 
 `/mcp` is the one path that does **not** sit behind the reverse proxy's forward-auth,
 and it cannot: forward-auth answers an unauthenticated request with a redirect to a
@@ -300,6 +300,30 @@ login flow, and a program following a 302 to an OAuth screen learns nothing. So 
 proxy routes `/mcp` straight through and the relay checks an
 `Authorization: Bearer <token>` header itself — in the process that owns the thing being
 protected, rather than in a label on a container.
+
+**Tokens are managed on the dashboard's MCP page.** Name one after whatever will hold
+it, and it is shown exactly once: the relay stores a SHA-256 hash and a four-character
+hint, so nothing on this side can produce the value again. Each row says when it was
+created and when it was last used — which is how "is this one still in something's
+config" gets an answer — and revoking takes effect on the very next request, because
+every request is checked rather than a session being established.
+
+That page also carries two copy-paste blocks: the MCP client config, and a plain-text
+briefing to hand an assistant that says where to connect, what the three tools are, and
+the two things that stop an agent guessing wrong. Both come out with a fresh token
+already filled in.
+
+```jsonc
+{
+  "mcpServers": {
+    "strux": {
+      "type": "http",
+      "url": "https://relay.example/mcp",
+      "headers": { "Authorization": "Bearer <the token the page showed you>" }
+    }
+  }
+}
+```
 
 ```bash
 curl -i https://relay.example/mcp \
@@ -309,14 +333,17 @@ curl -i https://relay.example/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
-The token comes from configuration and nowhere else:
+**A second source, deliberately.** The deployment may also configure one token:
 
 ```
 Relay__Mcp__Token=<a long random string>      # env var, from your secrets store
 ```
 
-or the same thing as `Relay:Mcp:Token` in `appsettings.json` for a local run. It is never
-compiled in, never defaulted and never in this repository.
+It works exactly like an issued token and the page shows that it exists, but it cannot
+be revoked from the dashboard — it is rotated where every other secret is. It earns its
+place by being the credential that works *before* anyone has opened the dashboard, on a
+relay whose database has no tokens in it yet. Leave it out and the page is the only
+source, which is the ordinary case once a relay is running.
 
 What the check does, and deliberately does not do:
 
@@ -324,14 +351,17 @@ What the check does, and deliberately does not do:
   for the call, a GET that holds the event stream open, and sub-paths (`/mcp/sse`,
   `/mcp/message`) beneath the same prefix. Authenticating only the opening request would
   leave the stream that carries the answers open to whoever asked for it;
-* a missing or wrong token is **401** with `WWW-Authenticate: Bearer`, never a redirect;
-* the comparison is constant time, like the device token's;
-* **no token configured means the endpoint refuses everything** (503) and says so at
-  startup. An unset secret must not silently publish a device-driving API — that is the
-  failure nothing looks wrong from outside;
-* there are no users, scopes, refresh tokens or OAuth behind it. This is one machine
-  credential answering one question — "is this the machine we gave it to". Which devices
-  that machine may then reach is the *other* gate, and stays the per-device MCP switch.
+* a missing, wrong or revoked token is **401** with `WWW-Authenticate: Bearer`, never a
+  redirect;
+* the deployment token is compared in constant time; issued tokens are looked up by
+  hash, where that question does not arise — matching a hash needs a preimage, not
+  patience;
+* **no credential of any kind means the endpoint refuses everything.** An unset secret
+  must not silently publish a device-driving API; the MCP page says so in as many words
+  when that is the state;
+* there are no users, scopes, refresh tokens or OAuth behind any of it. A token answers
+  one question — "is this a machine we gave a credential to". Which devices that machine
+  may then reach is the *other* gate, and stays the per-device MCP switch.
 
 The dashboard, the hub and every browser path keep their forward-auth, and `/device`
 keeps its own unauthenticated route and its own device token. Neither changed.

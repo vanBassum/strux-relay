@@ -63,6 +63,10 @@ builder.Services.AddSingleton<ITelemetrySink, InfluxTelemetrySink>();
 // reverse proxy that authenticates people, so reaching /mcp means having got past
 // it. The per-device switch is the second half — see ApprovedDevice.McpExposed.
 builder.Services.AddSingleton<DeviceMcp>();
+// The credentials for that endpoint: the deployment's, from configuration, plus any
+// issued from the dashboard. A singleton because the guard resolves it once, at
+// startup, and then asks it on every request.
+builder.Services.AddSingleton<McpTokenStore>();
 builder.Services.AddMcpServer(options => options.ServerInfo = new Implementation
     {
         Name = "strux-relay",
