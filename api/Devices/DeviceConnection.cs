@@ -640,12 +640,56 @@ internal sealed class DeviceConnection
             }
         }
 
-        // The first chunk of a session takes the pipe and holds it until the device
-        // finals or the browser goes. Awaited outside the lock, because what it
-        // waits for is another session finishing — which can be a whole firmware
-        // upload, minutes of it.
+        // A RESET never waits for the pipe, and this is the whole reason cancelling
+        // works through a relay. It runs on the browser's READ LOOP: anything awaited
+        // here stops that browser being read at all, so a RESET queued behind a gate
+        // wait can never arrive -- and the thing it would have cancelled is what holds
+        // the gate. The first version of this deadlocked exactly that way, until the
+        // watchdog noticed fifteen seconds later.
+        if (!opening && (flags & SessionChunk.FlagReset) != 0)
+        {
+            await SendAsync(session, flags, payload, cancellationToken);
+            lock (browserLock)
+            {
+                browserSessions.Remove(session);
+                browserMap.Remove((browser, browserSession));
+            }
+            ReleaseGate(session);
+            return;
+        }
+
+        // The first frame of a session takes the pipe and holds it until the device
+        // finals or the browser goes.
         if (opening)
-            await AcquireGateAsync(session, cancellationToken);
+        {
+            // On the channels wire, refuse rather than queue. The device answers a
+            // second OPEN with RESET "busy" and this makes the relay say the same
+            // thing, so a browser cannot tell whether it is talking through one --
+            // and, more to the point, the read loop keeps running.
+            //
+            // The legacy wire has no such answer, so it still waits, which is the
+            // behaviour every deployed device has always seen.
+            if (wire == SessionChunk.Wire.Channels)
+            {
+                if (!await TryAcquireGateAsync(session))
+                {
+                    lock (browserLock)
+                    {
+                        browserSessions.Remove(session);
+                        browserMap.Remove((browser, browserSession));
+                    }
+                    await browser.SendAsync(
+                        SessionChunk.Frame(browserSession, SessionChunk.FlagReset,
+                            Encoding.UTF8.GetBytes("busy")),
+                        cancellationToken);
+                    return;
+                }
+            }
+            else
+            {
+                await AcquireGateAsync(session, cancellationToken);
+            }
+        }
 
         await SendAsync(session, flags, payload, cancellationToken);
 
@@ -1048,6 +1092,24 @@ internal sealed class DeviceConnection
     }
 
     // ── the in-flight gate ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Take the pipe only if it is free right now. Used where blocking would stall a
+    /// read loop -- see RelayFromBrowserAsync.
+    /// </summary>
+    public async Task<bool> TryAcquireGateAsync(ushort holder)
+    {
+        if (!await gate.WaitAsync(0)) return false;
+
+        lock (gateLock)
+        {
+            gateHolder = holder;
+            gateTouched = Stopwatch.GetTimestamp();
+            gateWatchdog = new CancellationTokenSource();
+            _ = WatchGateAsync(holder, gateWatchdog.Token);
+        }
+        return true;
+    }
 
     public async Task AcquireGateAsync(ushort holder, CancellationToken cancellationToken)
     {
