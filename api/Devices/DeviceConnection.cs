@@ -21,7 +21,7 @@ internal sealed class DeviceConnection
     /// still frees the pipe within this window.
     ///
     /// It is deliberately LONGER than the device's own receive timeout (10 s, in
-    /// RelaySessionLink): the two have to be decided together, because whichever
+    /// RelayTransport): the two have to be decided together, because whichever
     /// fires first decides how the session ends. Device first is what we want — it
     /// EOFs its own request, its handler writes a reply, and that reply releases
     /// the gate the normal way. Relay first would mean releasing the pipe while the
