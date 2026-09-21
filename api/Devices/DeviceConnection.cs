@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text;
@@ -64,6 +65,24 @@ internal sealed class DeviceConnection
     private CancellationTokenSource? gateWatchdog;
 
     private ushort nextServerId = SessionChunk.ServerIdBase;
+
+    // ── the channels wire ─────────────────────────────────────────────────────
+    //
+    // Decided by the device's FIRST frame and never asked about: CONTROL means the
+    // new protocol, anything else means the old one. Both are obliged to speak
+    // first and they say different things, so no timeout and no negotiation.
+    private SessionChunk.Wire wire = SessionChunk.Wire.Unknown;
+    private ulong handshakeNonce;
+    private bool channelsReady;
+    private bool lowHalf;
+
+    /// <summary>Streams the DEVICE opened at us, by channel id, named by its OPEN envelope.</summary>
+    private readonly Dictionary<ushort, string> deviceStreams = [];
+
+    /// <summary>True once the handshake has settled, or immediately on the legacy wire.</summary>
+    public bool Ready => wire == SessionChunk.Wire.Legacy || channelsReady;
+
+    public SessionChunk.Wire Protocol => wire;
 
     /// <summary>
     /// The browsers watching this device, and the sessions they own. Three
@@ -212,6 +231,23 @@ internal sealed class DeviceConnection
         // the whole question this answers.
         LastMessageAt = DateTime.UtcNow;
 
+        if (wire == SessionChunk.Wire.Unknown)
+        {
+            wire = (flags & SessionChunk.FlagControl) != 0
+                ? SessionChunk.Wire.Channels
+                : SessionChunk.Wire.Legacy;
+
+            logger.LogInformation(
+                "device {DeviceId} pipe #{Pipe} speaks the {Wire} wire",
+                DeviceId, Pipe, wire);
+        }
+
+        if (wire == SessionChunk.Wire.Channels)
+        {
+            await OnChannelFrameAsync(session, flags, payload, cancellationToken);
+            return;
+        }
+
         if (session == SessionChunk.BroadcastSession)
         {
             // Log lines, which go to every attached browser — verbatim, header and
@@ -240,6 +276,18 @@ internal sealed class DeviceConnection
 
         // Device → relay counts as progress: an upload's progress reports arrive
         // this way, and so does every chunk of a long file read out of the device.
+        await RouteReplyAsync(session, flags, payload, cancellationToken);
+    }
+
+    /// <summary>
+    /// A reply to something the relay or a browser asked for. Identical on both
+    /// wires: the relay owns the header and nothing below it, so a frame travels
+    /// to whoever asked with its flags untouched -- which is why OPEN and RESET
+    /// needed no handling when the channels wire arrived.
+    /// </summary>
+    private async Task RouteReplyAsync(
+        ushort session, byte flags, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
+    {
         TouchGate(session);
 
         Channel<Chunk>? waiting;
@@ -282,6 +330,186 @@ internal sealed class DeviceConnection
 
         logger.LogWarning(
             "device {DeviceId}: chunk for unknown session {Session} (dropped)", DeviceId, session);
+    }
+
+    /// <summary>
+    /// One frame on the channels wire. Everything a BROWSER owns falls through to
+    /// the same mapping the legacy path uses -- the relay rewrites the id and
+    /// forwards the flags untouched, so OPEN and RESET need no handling here at
+    /// all. What is new is the handshake, and the streams the device opens for
+    /// itself in place of the three reserved ids.
+    /// </summary>
+    private async Task OnChannelFrameAsync(
+        ushort session, byte flags, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
+    {
+        if ((flags & SessionChunk.FlagControl) != 0)
+        {
+            await OnControlAsync(payload, cancellationToken);
+            return;
+        }
+
+        if (!channelsReady)
+        {
+            logger.LogWarning(
+                "device {DeviceId}: channel {Session} before READY - dropped", DeviceId, session);
+            return;
+        }
+
+        // A stream the device opened at us. It names itself in its envelope exactly
+        // as a command does, which is the whole of what replaced BroadcastSession,
+        // TelemetrySession and HelloSession.
+        if ((flags & SessionChunk.FlagOpen) != 0 && !deviceStreams.ContainsKey(session)
+            && !browserSessions.ContainsKey(session) && !serverSessions.ContainsKey(session))
+        {
+            var name = ReadEnvelopeType(payload.Span);
+            if (name is "log stream" or "telemetry stream")
+            {
+                deviceStreams[session] = name;
+                logger.LogInformation(
+                    "device {DeviceId} opened {Name} on channel {Session}", DeviceId, name, session);
+            }
+            else
+            {
+                // Silence is acceptance, so a refusal has to be said.
+                await SendAsync(session, SessionChunk.FlagReset,
+                    Encoding.UTF8.GetBytes("unknown stream"), cancellationToken);
+            }
+            return;
+        }
+
+        if (deviceStreams.TryGetValue(session, out var stream))
+        {
+            if ((flags & SessionChunk.FlagReset) != 0)
+            {
+                deviceStreams.Remove(session);
+                return;
+            }
+
+            if (stream == "telemetry stream")
+            {
+                // Handed over by identity rather than by connection: the router has
+                // no business knowing what a pipe is, and the device's own `device`
+                // tag is not trusted for attribution.
+                telemetry.Ingest(DeviceId, Name, payload.Span);
+            }
+            else
+            {
+                // Log records go to every attached browser, on whatever channel the
+                // relay opened to each of them -- the device's id means nothing in a
+                // browser's id space, so this is a copy and not a forward.
+                await FanoutLogAsync(payload, cancellationToken);
+            }
+            return;
+        }
+
+        // Anything else is an ordinary request/reply, mapped exactly as before.
+        await RouteReplyAsync(session, flags, payload, cancellationToken);
+    }
+
+    private async Task OnControlAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
+    {
+        if (!SessionChunk.ReadHandshake(payload.Span, out var version, out var peerNonce))
+        {
+            logger.LogWarning("device {DeviceId}: short CONTROL frame", DeviceId);
+            return;
+        }
+
+        if (version != SessionChunk.ProtocolVersion)
+        {
+            // The relay is the hub and the only participant that is easy to
+            // redeploy, so tolerance belongs here -- but v1 has nothing older to be
+            // tolerant of yet, and a device speaking something else is refused
+            // rather than guessed at.
+            logger.LogError(
+                "device {DeviceId} speaks protocol {Version}, this relay speaks {Ours}",
+                DeviceId, version, SessionChunk.ProtocolVersion);
+            await CloseAsync();
+            return;
+        }
+
+        if (peerNonce == handshakeNonce)
+        {
+            handshakeNonce = NextNonce();
+            await SendRawAsync(SessionChunk.Handshake(handshakeNonce), cancellationToken);
+            return;
+        }
+
+        lowHalf = handshakeNonce > peerNonce;
+        nextServerId = lowHalf ? SessionChunk.LowBase : SessionChunk.HighBase;
+        nextBrowserId = nextServerId;
+        channelsReady = true;
+
+        logger.LogInformation(
+            "device {DeviceId} pipe #{Pipe} ready, relay allocates the {Half} half",
+            DeviceId, Pipe, lowHalf ? "low" : "high");
+
+        var ready = OnReady;
+        if (ready is not null) await ready(cancellationToken);
+    }
+
+    /// <summary>Called once the channels handshake has settled, so the caller can ask who this is.</summary>
+    public Func<CancellationToken, Task>? OnReady { get; set; }
+
+    /// <summary>Our half of the handshake, sent the moment the socket is accepted.</summary>
+    public Task SendHandshakeAsync(CancellationToken cancellationToken)
+    {
+        handshakeNonce = NextNonce();
+        return SendRawAsync(SessionChunk.Handshake(handshakeNonce), cancellationToken);
+    }
+
+    private static ulong NextNonce()
+    {
+        Span<byte> b = stackalloc byte[8];
+        System.Security.Cryptography.RandomNumberGenerator.Fill(b);
+        return BinaryPrimitives.ReadUInt64LittleEndian(b);
+    }
+
+    private static string ReadEnvelopeType(ReadOnlySpan<byte> payload)
+    {
+        try
+        {
+            var text = Encoding.UTF8.GetString(payload).Trim();
+            using var doc = JsonDocument.Parse(text);
+            return doc.RootElement.TryGetProperty("type", out var type)
+                ? type.GetString() ?? ""
+                : "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    /// <summary>
+    /// A log record to every attached browser. Unlike the legacy fan-out this is a
+    /// COPY rather than a forward: the device's channel id means nothing in a
+    /// browser's id space, so each browser gets the record on the stream the relay
+    /// opened to it. With nobody attached they are dropped rather than buffered --
+    /// a log line nobody is watching is not owed a queue.
+    /// </summary>
+    private async Task FanoutLogAsync(
+        ReadOnlyMemory<byte> record, CancellationToken cancellationToken)
+    {
+        BrowserConnection[] attached;
+        lock (browserLock)
+        {
+            if (browsers.Count == 0) return;
+            attached = [.. browsers];
+        }
+
+        foreach (var browser in attached)
+        {
+            var id = await browser.EnsureLogStreamAsync(cancellationToken);
+            if (id is null)
+            {
+                DropBrowser(browser);
+                continue;
+            }
+
+            if (!await browser.SendAsync(
+                    SessionChunk.Frame(id.Value, 0, record.Span), cancellationToken))
+                DropBrowser(browser);
+        }
     }
 
     private async Task FanoutAsync(
@@ -337,6 +565,21 @@ internal sealed class DeviceConnection
     }
 
     // ── relay → device ────────────────────────────────────────────────────────
+
+    /// <summary>A frame that is already framed. Only the handshake needs this.</summary>
+    public async Task SendRawAsync(ReadOnlyMemory<byte> frame, CancellationToken cancellationToken)
+    {
+        await sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            await socket.SendAsync(
+                frame, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken);
+        }
+        finally
+        {
+            sendLock.Release();
+        }
+    }
 
     public async Task SendAsync(
         ushort session, byte flags, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
@@ -461,14 +704,14 @@ internal sealed class DeviceConnection
     /// </summary>
     private ushort AllocateBrowserSession()
     {
-        for (var attempt = 0; attempt < SessionChunk.BrowserIdLimit - SessionChunk.BrowserIdBase; attempt++)
+        var (b, l) = Halves(server: false);
+
+        for (var attempt = 0; attempt < l - b; attempt++)
         {
             var session = nextBrowserId;
-            nextBrowserId = (ushort)(session + 1 >= SessionChunk.BrowserIdLimit
-                ? SessionChunk.BrowserIdBase
-                : session + 1);
+            nextBrowserId = (ushort)(session + 1 >= l ? b : session + 1);
 
-            if (!browserSessions.ContainsKey(session))
+            if (!browserSessions.ContainsKey(session) && !serverSessions.ContainsKey(session))
                 return session;
         }
 
@@ -671,7 +914,7 @@ internal sealed class DeviceConnection
                     throw new RelayException($"device {DeviceId} went silent on {what}");
                 }
 
-                if ((chunk.Flags & SessionChunk.FlagReject) != 0)
+                if ((chunk.Flags & SessionChunk.FlagReset) != 0)
                     // The device's OWN reason, unwrapped — a handler's RequestError
                     // arrives this way and is the most useful thing anyone gets to
                     // see about a refused command.
@@ -723,7 +966,13 @@ internal sealed class DeviceConnection
         // so the overwhelmingly common command costs no extra send.
         if (bodyBytes.IsEmpty)
         {
-            await SendAsync(session, SessionChunk.FlagFinal, envelope, cancellationToken);
+            // OPEN|FINAL: the whole request in one frame, our direction closed with
+            // it. The legacy wire has no OPEN and a device on it would refuse the
+            // flag, so it is set only when the device said CONTROL first.
+            var openFlags = wire == SessionChunk.Wire.Channels
+                ? (byte)(SessionChunk.FlagOpen | SessionChunk.FlagFinal)
+                : SessionChunk.FlagFinal;
+            await SendAsync(session, openFlags, envelope, cancellationToken);
             return;
         }
 
@@ -767,18 +1016,35 @@ internal sealed class DeviceConnection
     /// </summary>
     private ushort AllocateServerSession()
     {
-        for (var attempt = 0; attempt < SessionChunk.ServerIdLimit - SessionChunk.ServerIdBase; attempt++)
+        // On the channels wire the relay and its browsers share ONE half -- the one
+        // the nonces gave the relay -- because the device owns the other and this
+        // connection is the only place either is meaningful. On the legacy wire the
+        // split is fixed and the two allocators have a half each.
+        var (b, l) = Halves(server: true);
+
+        for (var attempt = 0; attempt < l - b; attempt++)
         {
             var session = nextServerId;
-            nextServerId = (ushort)(session + 1 >= SessionChunk.ServerIdLimit
-                ? SessionChunk.ServerIdBase
-                : session + 1);
+            nextServerId = (ushort)(session + 1 >= l ? b : session + 1);
 
-            if (!serverSessions.ContainsKey(session))
+            if (!serverSessions.ContainsKey(session) && !browserSessions.ContainsKey(session))
                 return session;
         }
 
         throw new RelayException("no free session ids");
+    }
+
+    /// <summary>The id range this allocator may use, by wire.</summary>
+    private (int Base, int Limit) Halves(bool server)
+    {
+        if (wire != SessionChunk.Wire.Channels)
+            return server
+                ? (SessionChunk.ServerIdBase, SessionChunk.ServerIdLimit)
+                : (SessionChunk.BrowserIdBase, SessionChunk.BrowserIdLimit);
+
+        return lowHalf
+            ? (SessionChunk.LowBase, SessionChunk.LowLimit)
+            : (SessionChunk.HighBase, SessionChunk.HighLimit);
     }
 
     // ── the in-flight gate ────────────────────────────────────────────────────
@@ -872,7 +1138,7 @@ internal sealed class DeviceConnection
         // timeout: the answer is already known.
         foreach (var channel in waiting)
             channel.Writer.TryWrite(new Chunk(
-                SessionChunk.FlagReject, Encoding.UTF8.GetBytes("device disconnected")));
+                SessionChunk.FlagReset, Encoding.UTF8.GetBytes("device disconnected")));
 
         BrowserConnection[] attached;
         lock (browserLock)

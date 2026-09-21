@@ -1,4 +1,7 @@
+using System.Buffers.Binary;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace StruxRelay.Devices;
 
@@ -15,6 +18,80 @@ namespace StruxRelay.Devices;
 internal sealed class BrowserConnection(WebSocket socket)
 {
     private readonly SemaphoreSlim sendLock = new(1, 1);
+
+    // ── the channels wire ─────────────────────────────────────────────────────
+    //
+    // A browser is a PEER of the relay, exactly as the device is, so this socket
+    // has its own handshake and its own id halves -- entirely separate from the
+    // ones on the device pipe. The relay is a channel-level proxy, not a tunnel,
+    // and that was already true before the protocol said so.
+    private ulong nonce;
+    private bool ready;
+    private bool lowHalf;
+    private ushort nextId;
+    private ushort? logStream;
+    private readonly SemaphoreSlim streamLock = new(1, 1);
+
+    public bool Ready => ready;
+
+    /// <summary>Our half of the handshake, sent the moment the socket is accepted.</summary>
+    public Task<bool> SendHandshakeAsync(CancellationToken cancellationToken)
+    {
+        Span<byte> b = stackalloc byte[8];
+        RandomNumberGenerator.Fill(b);
+        nonce = BinaryPrimitives.ReadUInt64LittleEndian(b);
+        return SendAsync(SessionChunk.Handshake(nonce), cancellationToken);
+    }
+
+    /// <summary>
+    /// The browser's CONTROL frame. True once the handshake has settled; false while
+    /// a nonce collision is being redrawn, which the caller answers by sending again.
+    /// </summary>
+    public bool Settle(ReadOnlySpan<byte> payload, out byte version)
+    {
+        version = 0;
+        if (!SessionChunk.ReadHandshake(payload, out version, out var peer)) return false;
+        if (version != SessionChunk.ProtocolVersion) return false;
+        if (peer == nonce) return false;
+
+        lowHalf = nonce > peer;
+        nextId = (ushort)(lowHalf ? SessionChunk.LowBase : SessionChunk.HighBase);
+        ready = true;
+        return true;
+    }
+
+    /// <summary>
+    /// The channel this relay pushes log records down to this browser, opened on
+    /// first use. The device's own channel id means nothing here, so records are
+    /// copied onto ours rather than forwarded.
+    /// </summary>
+    public async Task<ushort?> EnsureLogStreamAsync(CancellationToken cancellationToken)
+    {
+        if (logStream is { } existing) return existing;
+        if (!ready) return null;
+
+        await streamLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (logStream is { } raced) return raced;
+
+            var id = nextId;
+            nextId = (ushort)(id + 1 >= (lowHalf ? SessionChunk.LowLimit : SessionChunk.HighLimit)
+                ? (lowHalf ? SessionChunk.LowBase : SessionChunk.HighBase)
+                : id + 1);
+
+            var envelope = Encoding.UTF8.GetBytes("{\"type\":\"log stream\"}\n");
+            if (!await SendAsync(SessionChunk.Frame(id, SessionChunk.FlagOpen, envelope), cancellationToken))
+                return null;
+
+            logStream = id;
+            return id;
+        }
+        finally
+        {
+            streamLock.Release();
+        }
+    }
 
     public WebSocket Socket { get; } = socket;
 

@@ -47,6 +47,13 @@ internal static class BrowserPipe
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
         var browser = new BrowserConnection(socket);
+
+        // On the channels wire this socket is its own Connection with its own
+        // handshake, unrelated to the one on the device pipe. On the legacy wire
+        // there is no handshake and the browser is marked ready by fiat below.
+        if (connection.Protocol == SessionChunk.Wire.Channels)
+            await browser.SendHandshakeAsync(context.RequestAborted);
+
         connection.AttachBrowser(browser);
 
         logger.LogInformation(
@@ -69,6 +76,37 @@ internal static class BrowserPipe
                 message.Write(buffer.AsSpan(0, result.Count));
                 if (!result.EndOfMessage)
                     continue;
+
+                var span = message.WrittenSpan;
+                if (span.Length >= SessionChunk.HeaderSize
+                    && (span[2] & SessionChunk.FlagControl) != 0)
+                {
+                    // Connection-level, so it never reaches the device: the two
+                    // pipes handshake independently.
+                    if (!browser.Settle(span[SessionChunk.HeaderSize..], out var version))
+                    {
+                        if (version != SessionChunk.ProtocolVersion)
+                        {
+                            logger.LogWarning(
+                                "browser on {DeviceId} speaks protocol {Version} - closing",
+                                deviceId, version);
+                            break;
+                        }
+                        // A nonce collision: redraw and say so again.
+                        await browser.SendHandshakeAsync(context.RequestAborted);
+                    }
+                    message.ResetWrittenCount();
+                    continue;
+                }
+
+                if (connection.Protocol == SessionChunk.Wire.Channels && !browser.Ready)
+                {
+                    logger.LogWarning(
+                        "browser on {DeviceId} sent channel traffic before READY - dropped",
+                        deviceId);
+                    message.ResetWrittenCount();
+                    continue;
+                }
 
                 await connection.RelayFromBrowserAsync(
                     browser, message.WrittenMemory, context.RequestAborted);

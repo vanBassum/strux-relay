@@ -97,6 +97,12 @@ internal static class DevicePipe
             await registry.NotifyChangedAsync();
         };
 
+        // Ours goes out before anything else on this socket. A device on the OLD
+        // wire never reads it -- its frame loop only understands the reserved ids --
+        // and simply ignores a frame for a session it does not know, so sending it
+        // unconditionally costs one 12-byte frame and keeps this path role-neutral.
+        await connection.SendHandshakeAsync(context.RequestAborted);
+
         await registry.AddAsync(connection);
 
         // Connect is the cache's invalidation point, and the only one it needs: a
@@ -113,8 +119,22 @@ internal static class DevicePipe
             deviceId, connection.Pipe, address,
             dropped > 0 ? $" — dropped {dropped} cached files" : "");
 
+        // Gated on READY, and this is not a style point: the warmer's first act is a
+        // `web read`, which mints a channel id -- and before the handshake settles
+        // the relay does not yet know WHICH HALF of the id space is its to mint
+        // from. On the legacy wire Ready is true from the start, so this fires as
+        // it always did.
         if (cacheOptions.Value.WarmOnConnect)
-            warmer.Start(connection);
+        {
+            if (connection.Ready)
+                warmer.Start(connection);
+            else
+                connection.OnReady = _ =>
+                {
+                    warmer.Start(connection);
+                    return Task.CompletedTask;
+                };
+        }
 
         try
         {
