@@ -16,6 +16,9 @@ ASP.NET Core on .NET 10, with a React + shadcn/ui dashboard. It replaced a
 ~1400-line Python server; that version is in the history if you need it
 (`git log -- relay.py`).
 
+Running the deployment at `strux.vanbassum.com` — the routers it needs, the stack
+conventions, how pairing behaves in production — is [docs/operations.md](docs/operations.md).
+
 ## Run it
 
 ```bash
