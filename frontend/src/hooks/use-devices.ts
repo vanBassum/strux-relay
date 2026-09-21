@@ -43,6 +43,14 @@ export type Device = {
    * lets a person drive it, this lets a model.
    */
   mcpExposed: boolean
+  /**
+   * Whether the relay can send this device a command right now. NOT the same as
+   * `connection === "online"`: the socket is open for a moment before the channels
+   * handshake settles, and until it does the relay cannot open a channel, so
+   * nothing can be asked of the device. The relay computes it — this shell does not
+   * get to have its own opinion about what "usable" means.
+   */
+  ready: boolean
 }
 
 /**

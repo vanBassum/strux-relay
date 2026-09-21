@@ -55,7 +55,13 @@ internal sealed class DeviceDirectory(PairingStore pairing, DeviceRegistry regis
                 Commit: NullIfEmpty(live?.Commit ?? device.Commit),
                 Details: hello.Rest,
                 Description: NullIfEmpty(hello.Description),
-                McpExposed: device.McpExposed));
+                McpExposed: device.McpExposed,
+                // Online AND past the handshake. Both halves are needed and they
+                // are different facts: the socket being open is what Connection
+                // already says, and Ready is whether the relay may mint a channel
+                // id on it yet. A device is usable when both hold, which is the
+                // same condition the cache warmer waits for before its first read.
+                Ready: live is not null && live.Online && live.Ready));
         }
 
         foreach (var device in state.Pending)
@@ -83,7 +89,9 @@ internal sealed class DeviceDirectory(PairingStore pairing, DeviceRegistry regis
                 Description: null,
                 // Nothing to expose: a device that may not connect cannot be reached
                 // by anything, MCP included.
-                McpExposed: false));
+                McpExposed: false,
+                // And nothing to send it either, for the same reason.
+                Ready: false));
         }
 
         // Pending first — they are the rows that want a decision — then by name,

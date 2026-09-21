@@ -76,4 +76,14 @@ internal sealed record DeviceView(
     /// not something the device said — see <see cref="Data.ApprovedDevice.McpExposed"/>.
     /// Always false for a pending device: there is nothing to expose until it is let in.
     /// </summary>
-    bool McpExposed = false);
+    bool McpExposed = false,
+    /// <summary>
+    /// Whether the relay can send this device a command RIGHT NOW. Not the same
+    /// question as <see cref="Connection.Online"/>: a socket is open some
+    /// milliseconds before the channels handshake settles, and until it does the
+    /// relay does not know which half of the id space is its to mint from, so it
+    /// cannot open a channel and nothing can be asked of the device. This is
+    /// <see cref="Devices.DeviceConnection.Ready"/> and the pipe still being open,
+    /// which is exactly what the warmer waits for.
+    /// </summary>
+    bool Ready = false);

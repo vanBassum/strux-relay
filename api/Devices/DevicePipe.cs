@@ -124,16 +124,24 @@ internal static class DevicePipe
         // the relay does not yet know WHICH HALF of the id space is its to mint
         // from. On the legacy wire Ready is true from the start, so this fires as
         // it always did.
-        if (cacheOptions.Value.WarmOnConnect)
+        if (connection.Ready)
         {
-            if (connection.Ready)
-                warmer.Start(connection);
-            else
-                connection.OnReady = _ =>
-                {
-                    warmer.Start(connection);
-                    return Task.CompletedTask;
-                };
+            if (cacheOptions.Value.WarmOnConnect) warmer.Start(connection);
+        }
+        else
+        {
+            connection.OnReady = async _ =>
+            {
+                if (cacheOptions.Value.WarmOnConnect) warmer.Start(connection);
+
+                // Ready is a fact the device list SHOWS, and on the channels wire
+                // it turns true after the AddAsync above already announced the row
+                // — so without this every open list holds a device that says it is
+                // not usable yet until something unrelated moves. Setting OnReady
+                // before the read loop starts is what makes this safe: no frame is
+                // processed until ReadLoopAsync below.
+                await registry.NotifyChangedAsync();
+            };
         }
 
         try

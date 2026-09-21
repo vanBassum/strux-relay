@@ -32,20 +32,20 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { ChoiceFilter } from "@/components/app/device-filters"
+import { ChoiceFilter, ScopeFilter } from "@/components/app/device-filters"
 import { DeviceUrl } from "@/components/app/device-url"
 import { deviceUiUrl } from "@/lib/device-url"
 import type { Device, DeviceList } from "@/hooks/use-devices"
 import { useNow } from "@/hooks/use-now"
 import {
-  APPROVAL_OPTIONS,
-  CONNECTION_OPTIONS,
   DEFAULT_PAGE_SIZE,
   NO_FILTERS,
   PAGE_SIZES,
   filterDevices,
+  scopeCounts,
   sortDevices,
   type Filters,
+  type Scope,
   type Sort,
   type SortKey,
 } from "@/lib/device-table"
@@ -120,6 +120,14 @@ export function DevicesPage({
     [devices, filters, sort]
   )
 
+  // Counted over the SEARCH but not the scope, so each segment says what it
+  // would show if you clicked it. Same helper the filter uses, so the number
+  // on "Ready" and the rows under it can never disagree.
+  const counts = useMemo(
+    () => scopeCounts(devices, filters.query),
+    [devices, filters.query]
+  )
+
   const pages = Math.max(1, Math.ceil(matched.length / pageSize))
 
   // Clamped while rendering rather than corrected in an effect. The list shrinks
@@ -159,17 +167,17 @@ export function DevicesPage({
             onChange={(event) => changeFilters({ query: event.target.value })}
           />
         </div>
-        <ChoiceFilter
-          label="Filter by connection"
-          value={filters.connection}
-          options={CONNECTION_OPTIONS}
-          onChange={(connection) => changeFilters({ connection })}
-        />
-        <ChoiceFilter
-          label="Filter by approval"
-          value={filters.approval}
-          options={APPROVAL_OPTIONS}
-          onChange={(approval) => changeFilters({ approval })}
+        {/* Where the two dropdowns were, and doing the job both were reached for:
+            "is there anything I can talk to". Status and Approval still say the
+            rest, per row, in the table. */}
+        <ScopeFilter
+          label="Which devices to show"
+          value={filters.scope}
+          options={[
+            { value: "ready" as Scope, label: "Ready", count: counts.ready },
+            { value: "all" as Scope, label: "All", count: counts.all },
+          ]}
+          onChange={(scope) => changeFilters({ scope })}
         />
         <div className="ml-auto">
           <DeviceUrl />
@@ -200,11 +208,16 @@ export function DevicesPage({
                 >
                   <span className="flex items-center justify-center gap-2">
                     <CpuIcon className="size-4" />
+                    {/* Three different nothings, and telling them apart is the
+                        whole value: no devices at all, none ready (so try All),
+                        or nothing matching what was typed. */}
                     {loading
                       ? "Loading…"
                       : devices.length === 0
                         ? "No devices yet — point one at the URL above."
-                        : "Nothing matches those filters."}
+                        : filters.scope === "ready" && counts.all > 0
+                          ? "Nothing is ready right now — switch to All to see the rest."
+                          : "Nothing matches that search."}
                   </span>
                 </TableCell>
               </TableRow>
