@@ -48,11 +48,19 @@ internal sealed class PairingStore(
     /// are written from the hello instead, once the socket is up. Null means "said
     /// nothing", which is why it is not an empty string — an empty string would wipe a
     /// name the relay already had.
+    ///
+    /// <paramref name="recordRefusal"/> false makes this READ-ONLY for anything but a
+    /// success: no pending row, no attempt counter, no event, no announcement. That is
+    /// what a rate-limited client gets — the credential is still checked, because a
+    /// device that has the right token must not be locked out by whoever else is
+    /// guessing from the same address, but a guess costs one indexed lookup and
+    /// leaves nothing behind. See <see cref="Devices.ConnectLimiter"/>.
     /// </summary>
     public async Task<ConnectDecision> AuthenticateAsync(
         string deviceId,
         string token,
         LegacyIdentity? legacy = null,
+        bool recordRefusal = true,
         CancellationToken cancellationToken = default)
     {
         await gate.WaitAsync(cancellationToken);
@@ -83,13 +91,15 @@ internal sealed class PairingStore(
                 // the same board after an NVS wipe — the MAC-derived id survives
                 // that and the token does not. The two are indistinguishable from
                 // here, so record and refuse: the operator decides which it was.
-                await RefuseAsync(database, deviceId, token, legacy, now,
-                    "token mismatch", cancellationToken);
+                if (recordRefusal)
+                    await RefuseAsync(database, deviceId, token, legacy, now,
+                        "token mismatch", cancellationToken);
                 return new ConnectDecision(false, "token mismatch");
             }
 
-            await RefuseAsync(database, deviceId, token, legacy, now,
-                "not approved", cancellationToken);
+            if (recordRefusal)
+                await RefuseAsync(database, deviceId, token, legacy, now,
+                    "not approved", cancellationToken);
             return new ConnectDecision(false, "device not approved");
         }
         finally

@@ -120,6 +120,13 @@ approved with in an `X-Strux-Token` header, or the upgrade is refused with a 403
 opens and dies. The device generates its own token; the relay only ever pins the
 value a device presented.
 
+How often it may get that wrong is bounded too, per client address and counting
+failures only: past twenty in a minute the answer is a `429` with a `Retry-After`,
+and nothing is written down for it. A limited client is still authenticated first,
+by a read-only lookup, so a device with the right token is never locked out by
+whoever else is guessing from the same address — see `ConnectLimiter`, which also
+says why the limit cannot be keyed on the device id the caller chose.
+
 The human side is expected to sit behind a reverse proxy that authenticates
 users; there are no accounts here. `/device` cannot be, because a device cannot
 follow a login redirect — hence the token, and hence `/device` being its own path

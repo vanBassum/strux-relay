@@ -107,6 +107,14 @@ what the outpost has, so a new proxy app must be added there as well as declared
 - **`forget` drops the live pipe too.** The token is only checked when a connection is
   made, so revoking without closing the socket would leave a forgotten device connected
   until it happened to reconnect.
+- **The endpoint is rate limited per client address**, on failures only: twenty
+  wrong connects in a minute and further attempts from that address are answered
+  `429` with a `Retry-After` until the minute is up. A limited client is still
+  *authenticated* — read-only, writing nothing down — so a device holding the right
+  token is never shut out by a neighbour on the same NAT that is guessing, and its
+  success clears the count. A refused device retries twice a minute, so twenty
+  leaves room for ten unapproved boards behind one address. The count is per
+  process and in memory; a restart forgives everybody.
 - **A pending device's name is attacker-controlled** — on the legacy connect URL, which
   is the only way an unapproved device says anything at all. It lands in the pending
   list, which renders on an admin page, so the dashboard escapes it. Escaping is not

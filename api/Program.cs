@@ -34,6 +34,10 @@ builder.Services.AddSingleton<PairingStore>();
 
 // Singletons because a device's pipe outlives any request but the one holding it.
 builder.Services.AddSingleton<DeviceRegistry>();
+// How often one address may get /device wrong. A singleton because it counts
+// across requests, and in memory because a restart forgiving everybody is the
+// same forgiveness a restart already grants every connected device.
+builder.Services.AddSingleton<ConnectLimiter>();
 builder.Services.AddSingleton<DeviceDirectory>();
 
 // The device frontend cache. One instance for the process: entries are keyed by
@@ -99,7 +103,16 @@ var app = builder.Build();
 // publishes it directly must set Relay:PublicUrl instead.
 var forwarded = new ForwardedHeadersOptions
 {
-    ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost,
+    // XForwardedFor as well as the two that make absolute URLs come out right:
+    // without it every device behind the proxy arrives as the proxy's own
+    // container address, which is one address for the whole fleet — an address
+    // the dashboard then shows for every device, and the one thing ConnectLimiter
+    // keys on. With the default ForwardLimit of 1 the value taken is the RIGHTMOST
+    // entry, which is the address the proxy itself saw; anything a client puts in
+    // the header lands to the left of that and is ignored.
+    ForwardedHeaders = ForwardedHeaders.XForwardedProto
+        | ForwardedHeaders.XForwardedHost
+        | ForwardedHeaders.XForwardedFor,
 };
 // Cleared with a method call, NOT with `KnownNetworks = { }` in the initializer above:
 // a collection initializer ADDS to the collection, so that spelling silently leaves the

@@ -29,6 +29,7 @@ internal static class DevicePipe
     public static async Task HandleAsync(
         HttpContext context,
         PairingStore pairing,
+        ConnectLimiter limiter,
         DeviceRegistry registry,
         TelemetryRouter telemetry,
         FrontendCache cache,
@@ -53,16 +54,42 @@ internal static class DevicePipe
         var token = context.Request.Headers["X-Strux-Token"].ToString();
         var address = context.Connection.RemoteIpAddress?.ToString();
 
+        // Has this address been getting it wrong? Asked before the database,
+        // because the work not done is the point — but it does not decide the
+        // answer on its own: a limited client is still authenticated, read-only,
+        // so a device holding the right token is never shut out by a neighbour
+        // that is guessing. See ConnectLimiter.
+        var limited = limiter.IsLimited(address, out var retryAfter);
+
         // Refused BEFORE the upgrade, so the device gets an HTTP status it already
         // logs ("upgrade refused with HTTP 403") instead of a socket that opens and
         // dies. This is the check that makes the endpoint safe to leave on the
         // public internet: no stranger can register, and nobody can take an
         // approved device's slot.
         var decision = await pairing.AuthenticateAsync(
-            deviceId, token, legacy, context.RequestAborted);
+            deviceId, token, legacy, recordRefusal: !limited, context.RequestAborted);
 
         if (!decision.Allowed)
         {
+            if (limited)
+            {
+                // 429 rather than 403, because the two mean different things to
+                // whoever reads the device's log: one says "approve me", the other
+                // says "you are asking too often". The device treats both as a
+                // refusal and retries on its 30 s refusal backoff, so it recovers
+                // by itself once the window passes — or immediately, if it is the
+                // one with the right token.
+                logger.LogDebug(
+                    "rate limited {Address} asking for {DeviceId} ({Reason})",
+                    address, deviceId, decision.Reason);
+                context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                context.Response.Headers.RetryAfter = retryAfter.ToString();
+                await context.Response.WriteAsync(
+                    $"too many failed connects - retry in {retryAfter}s");
+                return;
+            }
+
+            limiter.RecordFailure(address);
             logger.LogWarning(
                 "refused device {DeviceId} from {Address}: {Reason}",
                 deviceId, address, decision.Reason);
@@ -70,6 +97,11 @@ internal static class DevicePipe
             await context.Response.WriteAsync(decision.Reason);
             return;
         }
+
+        // It had the token. Whatever its address had got wrong before is not this
+        // device's problem, and holding it against the next connect from the same
+        // NAT would be the lockout this limiter exists to avoid.
+        limiter.RecordSuccess(address);
 
         if (!context.WebSockets.IsWebSocketRequest)
         {
