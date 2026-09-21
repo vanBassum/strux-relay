@@ -110,9 +110,9 @@ and rewrite the 3-byte session header, because it must own the session-id space:
   let a page load interleave into its body, killing both.
 
 The device owns its frontend storage: the relay asks for `/index.html` and never
-learns it lives gzipped on a FAT partition called `www`. `Content-Encoding` comes
-back from the device, so gzip can pass straight through — which is what the file
-proxy will do when it lands.
+learns where the answer came from — a partition of its own on an older board, a
+gzipped blob linked into the app image on a current one. `Content-Encoding` comes
+back from the device, so gzip passes straight through.
 
 Who may connect: a device must be approved, and must present the token it was
 approved with in an `X-Strux-Token` header, or the upgrade is refused with a 403
@@ -173,8 +173,17 @@ cache keyed on `(deviceId, path)`.
 **A connection is the cache's lifetime.** Entries are dropped when a device
 connects and kept for as long as that connection lasts — no TTL and no
 revalidation, because the only moment a device's content can change under us is
-one we already see: it has to reboot, and rebooting drops the pipe. The one case
-connect cannot see is `www` replaced on a running device; Clear is the answer.
+one we already see: it has to reboot, and rebooting drops the pipe. A Strux device
+stopped being able to change it any other way when its frontend became part of the
+app image: changing it is an OTA now, and an OTA takes effect on a reboot. An older
+firmware serving its frontend from a partition of its own can still swap it under a
+live pipe, and for that one Clear is the answer.
+
+A fetch that is still in flight when a device reconnects — or when somebody presses
+Clear — belongs to the connection that asked for it, so its bytes go to whoever was
+waiting and are **not** kept: storing them would put a file from the old connection
+into the new one's cache, where nothing would evict it until the device next
+reconnects.
 
 Fresh connections are **warmed** in the background: index.html, then the assets
 it names. Fetching what it *names* rather than crawling the partition keeps this

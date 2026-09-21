@@ -2,4 +2,7 @@
   <Folder Name="/api/">
     <Project Path="api/StruxRelay.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/StruxRelay.Tests/StruxRelay.Tests.csproj" />
+  </Folder>
 </Solution>

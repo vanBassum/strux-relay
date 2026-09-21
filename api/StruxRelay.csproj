@@ -27,6 +27,13 @@
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Every type in this assembly is internal, which is right: nothing outside
+         the process consumes it. The test project is inside the process for this
+         purpose only. -->
+    <InternalsVisibleTo Include="StruxRelay.Tests" />
+  </ItemGroup>
+
   <!-- IIS in-process shim; not needed in a container. -->
   <Target Name="RemoveAncmShim" AfterTargets="ComputeResolvedFilesToPublishList">
     <ItemGroup>

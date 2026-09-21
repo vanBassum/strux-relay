@@ -11,7 +11,7 @@ using StruxRelay.Telemetry;
 namespace StruxRelay.Devices;
 
 /// <summary>One ESP32's outbound socket: id space, session map, and the in-flight gate.</summary>
-internal sealed class DeviceConnection
+internal sealed class DeviceConnection : Cache.IFrontendSource
 {
     /// <summary>
     /// How long a session may go SILENT before the relay gives up on it — never

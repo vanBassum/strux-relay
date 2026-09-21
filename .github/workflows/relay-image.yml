@@ -17,8 +17,28 @@ env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/strux-relay
 
 jobs:
+  # The host tests: what can be checked without a device, a socket or a database.
+  # Small on purpose - everything else in this repo is verified by driving a real
+  # board over the pipe, and a mock of an ESP32 would prove nothing about one.
+  tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Test
+        run: dotnet test tests/StruxRelay.Tests/StruxRelay.Tests.csproj --nologo
+
   build-and-push:
     runs-on: ubuntu-latest
+    # An image that fails its own tests has no business moving a tag.
+    needs: tests
 
     steps:
       - name: Checkout

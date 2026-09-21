@@ -7,9 +7,10 @@ namespace StruxRelay.Cache;
 /// Serves a device's own frontend through the relay, from the cache when it can.
 ///
 /// The device owns its frontend storage: the relay asks for <c>/index.html</c>
-/// and never learns it lives gzipped on a FAT partition called <c>www</c>.
-/// Content-Encoding comes back from the device, so gzip passes straight through
-/// rather than being undone and redone here.
+/// and never learns where the answer came from — a partition on an older board,
+/// a blob in the app image on a current one. Content-Encoding comes back from the
+/// device, so gzip passes straight through rather than being undone and redone
+/// here.
 /// </summary>
 internal static class DeviceFrontend
 {

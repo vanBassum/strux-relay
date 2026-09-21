@@ -8,6 +8,18 @@ namespace StruxRelay.Cache;
 
 internal readonly record struct CacheKey(string DeviceId, string Path);
 
+/// <summary>
+/// Where a cached file comes from: one device, asked for one path. The cache uses
+/// nothing else about a connection, so this is the whole of what it needs —
+/// <see cref="DeviceConnection"/> implements it, and a test can too.
+/// </summary>
+internal interface IFrontendSource
+{
+    string DeviceId { get; }
+
+    Task<WebFile> WebReadAsync(string path, CancellationToken cancellationToken);
+}
+
 internal sealed record CachedFile(WebFileHeader Header, byte[] Body, string? ETag);
 
 internal enum WarmOutcome
@@ -44,6 +56,14 @@ internal sealed class DeviceCacheState
     public int WarmedFiles { get; set; }
 
     public int ExpectedFiles { get; set; }
+
+    /// <summary>
+    /// Bumped every time this device's files are dropped — by a reconnect, by
+    /// Clear, by Forget. A fetch records the generation it started in and stores
+    /// nothing if it has moved on since, because the answer it is holding describes
+    /// a device state the cache has already been told to forget.
+    /// </summary>
+    public int Generation { get; set; }
 }
 
 /// <summary>
@@ -58,9 +78,14 @@ internal sealed class DeviceCacheState
 /// That is what keeps this entirely server-side. The alternative — the device
 /// announcing a content digest so the relay could tell a flap from a reflash —
 /// works, but it puts a relay's caching strategy into the firmware, and no other
-/// transport has an opinion about it. What it costs is the one case connect
-/// cannot see: `www` replaced on a running device without a reboot. That stays
-/// cached until the device next reconnects, and Clear is the answer.
+/// transport has an opinion about it.
+///
+/// What it costs is a device that can replace its frontend WITHOUT rebooting.
+/// Strux devices stopped being able to when the `www` partition went and the
+/// frontend became part of the app image: changing it is now an OTA, and an OTA
+/// takes effect on a reboot, which is a reconnect. An older firmware serving its
+/// frontend from a partition of its own can still swap it under a live pipe, and
+/// for that one Clear is the answer.
 ///
 /// Why it exists at all: one request is in flight per device permanently, so an
 /// uncached page load is N *sequential* round trips, each one an ESP32 reading
@@ -117,7 +142,7 @@ internal sealed partial class FrontendCache(
     /// per device that is not a small waste.
     /// </summary>
     public async Task<CachedFile> GetOrFetchAsync(
-        DeviceConnection device, string path, CancellationToken cancellationToken)
+        IFrontendSource device, string path, CancellationToken cancellationToken)
     {
         var key = new CacheKey(device.DeviceId, path);
 
@@ -145,8 +170,14 @@ internal sealed partial class FrontendCache(
                 mine = true;
                 misses++;
 
+                // The generation this fetch belongs to, read while holding the lock
+                // that DropDevice takes: anything that drops this device's files
+                // between here and the store below moves it on, and the answer is
+                // then about a device state the cache has been told to forget.
+                var generation = State(device.DeviceId).Generation;
+
                 // Started outside the lock, below.
-                _ = RunFetchAsync(device, key, path, pending);
+                _ = RunFetchAsync(device, key, path, generation, pending);
             }
             else
             {
@@ -163,9 +194,10 @@ internal sealed partial class FrontendCache(
     }
 
     private async Task RunFetchAsync(
-        DeviceConnection device,
+        IFrontendSource device,
         CacheKey key,
         string path,
+        int generation,
         TaskCompletionSource<CachedFile> pending)
     {
         try
@@ -183,7 +215,14 @@ internal sealed partial class FrontendCache(
 
                 // Only 200s are cached. A 404 is cheap, and caching one would pin
                 // a mistake for as long as the entry lives.
-                if (file.Header.Status == 200)
+                //
+                // And only into the generation that asked. A fetch outlives the
+                // drop that raced it — Clear during a warm, or a device that
+                // reconnected while this was in flight — and storing it then would
+                // put a file from the OLD connection into the new one's cache,
+                // where nothing would evict it until the device next reconnects.
+                // The waiter still gets the bytes; they simply are not kept.
+                if (file.Header.Status == 200 && State(key.DeviceId).Generation == generation)
                     Store(key, cached);
             }
 
@@ -205,7 +244,13 @@ internal sealed partial class FrontendCache(
         finally
         {
             lock (gate)
-                inflight.Remove(key);
+            {
+                // Only if it is still ours. A drop detaches in-flight fetches so
+                // the next asker starts a fresh one, and that newer fetch must not
+                // be removed from the map by this older one finishing.
+                if (inflight.TryGetValue(key, out var current) && ReferenceEquals(current, pending.Task))
+                    inflight.Remove(key);
+            }
         }
     }
 
@@ -271,6 +316,15 @@ internal sealed partial class FrontendCache(
         var keys = slots.Keys.Where(key => key.DeviceId == deviceId).ToArray();
         foreach (var key in keys)
             DropLocked(key);
+
+        // Fetches already running are not cancelled — somebody is waiting on them
+        // — but they are detached: their results will not be stored (the
+        // generation moves below) and the next asker starts a fetch of its own
+        // rather than joining one that predates the drop.
+        foreach (var key in inflight.Keys.Where(key => key.DeviceId == deviceId).ToArray())
+            inflight.Remove(key);
+
+        State(deviceId).Generation++;
 
         if (devices.TryGetValue(deviceId, out var state))
         {

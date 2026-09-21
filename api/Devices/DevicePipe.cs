@@ -103,14 +103,19 @@ internal static class DevicePipe
         // unconditionally costs one 12-byte frame and keeps this path role-neutral.
         await connection.SendHandshakeAsync(context.RequestAborted);
 
-        await registry.AddAsync(connection);
-
         // Connect is the cache's invalidation point, and the only one it needs: a
         // device's content cannot change without a reboot, and a reboot lands
         // here. Everything cached for the old connection goes, and the new one is
         // warmed in the background — so the files are pulled once, now, instead of
         // during somebody's first page load.
+        //
+        // BEFORE the registry, not after. AddAsync is what makes this pipe
+        // findable, so a page load landing between the two would be served the
+        // previous connection's files against a connection that has already
+        // replaced it.
         var dropped = cache.DropDevice(deviceId);
+
+        await registry.AddAsync(connection);
 
         // Deliberately says only what is known AT CONNECT. The name and version come
         // a chunk later now, and the hello logs itself when it lands.
