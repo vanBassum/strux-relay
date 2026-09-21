@@ -124,6 +124,25 @@ internal static class BrowserPipe
                     if (haveDiscardedHeader)
                     {
                         haveDiscardedHeader = false;
+
+                        // Tearing the session down matters as much as saying why.
+                        // Refusing the chunk and stopping there leaves the device
+                        // waiting for a body that will never come, holding the gate
+                        // until its own receive timeout -- so the next command gets
+                        // "busy" for ten seconds over something this relay already
+                        // decided. Measured on v0.8.5: two refusals, then a pass.
+                        //
+                        // Routed through RelayFromBrowserAsync rather than undone by
+                        // hand, because a RESET from a browser is exactly what this
+                        // is, and that path already forwards it to the device, drops
+                        // the mappings and releases the gate. An unmapped session
+                        // falls out of it as residue, which is also right.
+                        await connection.RelayFromBrowserAsync(
+                            browser,
+                            SessionChunk.Frame(discardedSession, SessionChunk.FlagReset,
+                                Encoding.UTF8.GetBytes("chunk over the relay's window")),
+                            context.RequestAborted);
+
                         await browser.SendAsync(
                             SessionChunk.Frame(discardedSession, SessionChunk.FlagReset,
                                 Encoding.UTF8.GetBytes("chunk over the relay's window")),
