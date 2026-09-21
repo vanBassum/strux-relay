@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Net.WebSockets;
+using System.Text;
 
 namespace StruxRelay.Devices;
 
@@ -67,9 +68,17 @@ internal static class BrowserPipe
 
         // An ArrayBufferWriter GROWS. Without this a browser decides how much of
         // the relay's memory to take, and the rented buffer above is only a hint.
-        // RelayFromBrowserAsync refuses an over-window chunk it can see; this is
-        // what stops one being accumulated in the first place.
+        //
+        // This is also the ONLY place an over-window chunk can be refused, which
+        // cost a redeploy to learn: RelayFromBrowserAsync checks the size too, but
+        // an oversized chunk never reaches it, because it is discarded here first.
+        // So the refusal belongs here, with the session id read off the first
+        // fragment before the bytes go -- otherwise the browser is told nothing and
+        // sits until the DEVICE's receive timeout expires, blaming the device for
+        // something this relay decided.
         var discarding = false;
+        ushort discardedSession = 0;
+        var haveDiscardedHeader = false;
 
         try
         {
@@ -82,10 +91,28 @@ internal static class BrowserPipe
                 if (discarding || message.WrittenCount + result.Count > limit)
                 {
                     if (!discarding)
+                    {
                         logger.LogWarning(
                             "browser on {DeviceId} sent a chunk over this relay's "
-                            + "{Limit}-byte window - discarded", deviceId,
+                            + "{Limit}-byte window - refusing that channel", deviceId,
                             SessionChunk.MaxPayload);
+
+                        // The header is at the head of the message, which is either
+                        // already accumulated or at the start of this fragment.
+                        if (message.WrittenCount >= SessionChunk.HeaderSize)
+                        {
+                            (discardedSession, _) =
+                                SessionChunk.ReadHeader(message.WrittenSpan);
+                            haveDiscardedHeader = true;
+                        }
+                        else if (message.WrittenCount == 0
+                                 && result.Count >= SessionChunk.HeaderSize)
+                        {
+                            (discardedSession, _) =
+                                SessionChunk.ReadHeader(buffer.AsSpan(0, result.Count));
+                            haveDiscardedHeader = true;
+                        }
+                    }
                     discarding = true;
                     message.ResetWrittenCount();
                     // Read to the end of the message anyway, or its tail is read as
@@ -93,6 +120,15 @@ internal static class BrowserPipe
                     if (!result.EndOfMessage)
                         continue;
                     discarding = false;
+
+                    if (haveDiscardedHeader)
+                    {
+                        haveDiscardedHeader = false;
+                        await browser.SendAsync(
+                            SessionChunk.Frame(discardedSession, SessionChunk.FlagReset,
+                                Encoding.UTF8.GetBytes("chunk over the relay's window")),
+                            context.RequestAborted);
+                    }
                     continue;
                 }
 

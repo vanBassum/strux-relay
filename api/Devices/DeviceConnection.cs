@@ -650,13 +650,15 @@ internal sealed class DeviceConnection
         var (browserSession, flags) = SessionChunk.ReadHeader(chunk.Span);
         var payload = chunk[SessionChunk.HeaderSize..];
 
-        // Refuse an oversized chunk HERE rather than forward it. Each hop owns its
-        // own framing, so the relay has no way to know what the device at the other
-        // end can take in one piece -- it only knows what it is willing to send,
-        // which is this. Forwarding more on a browser's say-so used to push the
-        // device past its own buffer, and before the firmware learned to drop such a
-        // chunk on one channel that took the whole pipe down with it.
+        // A BACKSTOP, not the enforcement point. BrowserPipe's receive loop cannot
+        // accumulate a message this large in the first place, so it refuses one
+        // before it ever gets here -- which is what production testing of v0.8.4
+        // showed, after this check was written as if it were the only one. It stays
+        // because this method is reachable from anywhere that holds a chunk, and a
+        // public entry point validating its own precondition costs one comparison.
         //
+        // Each hop owns its own framing, so the relay cannot know what the device at
+        // the other end takes in one piece -- only what it is itself willing to send.
         // The browser is told on its own session id, which is the one id it holds.
         if (payload.Length > SessionChunk.MaxPayload)
         {
