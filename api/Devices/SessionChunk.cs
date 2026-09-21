@@ -113,9 +113,35 @@ internal static class SessionChunk
     public const ushort ServerIdLimit = HelloSession;
 
     /// <summary>
-    /// The device's inbound window. A larger frame is refused rather than split,
-    /// so nothing sent to a device may exceed it.
+    /// How much this relay puts in ONE chunk when sending to a device, and how
+    /// much it will accept in one chunk from a browser or a device.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is THIS HOP'S POLICY, not a property of the protocol and not a number
+    /// the device agrees to. It used to be documented as "the device's inbound
+    /// window", which was wrong in a way that mattered: it read as a shared
+    /// constant that the firmware and the relay both had to hold at 4096, when
+    /// what actually exists is a one-directional inequality per hop -- a sender's
+    /// chunk must fit the receiver's buffer, and neither end knows the other's
+    /// number.
+    /// </para>
+    /// <para>
+    /// Nothing breaks if a device chooses a larger inbound buffer; this relay
+    /// simply will not use the extra room. A device that chooses a SMALLER one
+    /// refuses the chunk on that one channel and keeps its pipe, so the failure is
+    /// a failed request rather than a dropped device. Raising this number is
+    /// therefore a compatibility decision about the oldest firmware in the fleet,
+    /// which is exactly the kind of decision that should be made here, in one
+    /// place, and not inferred from a constant in another repository.
+    /// </para>
+    /// <para>
+    /// The receive side uses the same number only because there is no reason for
+    /// it to differ today. A chunk over it is refused at this boundary rather than
+    /// forwarded, so one browser cannot spend the relay's memory or push an
+    /// oversized chunk at a device on its own authority.
+    /// </para>
+    /// </remarks>
     public const int MaxPayload = 4096;
 
     public static (ushort Session, byte Flags) ReadHeader(ReadOnlySpan<byte> chunk) =>

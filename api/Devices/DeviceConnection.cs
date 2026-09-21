@@ -180,11 +180,17 @@ internal sealed class DeviceConnection
     /// </summary>
     public async Task ReadLoopAsync(CancellationToken cancellationToken)
     {
-        // The device's window is 4096, so one receive covers a whole chunk in the
-        // ordinary case; the accumulator is what handles a fragmented frame, which
-        // the socket may deliver in pieces regardless of size.
-        var buffer = ArrayPool<byte>.Shared.Rent(SessionChunk.MaxPayload + SessionChunk.HeaderSize);
-        var message = new ArrayBufferWriter<byte>(SessionChunk.MaxPayload + SessionChunk.HeaderSize);
+        // One receive covers a whole chunk in the ordinary case; the accumulator is
+        // what handles a fragmented frame, which the socket may deliver in pieces
+        // regardless of size.
+        var limit = SessionChunk.MaxPayload + SessionChunk.HeaderSize;
+        var buffer = ArrayPool<byte>.Shared.Rent(limit);
+        var message = new ArrayBufferWriter<byte>(limit);
+
+        // An ArrayBufferWriter GROWS, so without this the accumulator's size is
+        // whatever the peer decides to send and the relay's memory is the device's
+        // to spend. The rented buffer was only ever a hint; this is the limit.
+        var discarding = false;
 
         try
         {
@@ -193,6 +199,23 @@ internal sealed class DeviceConnection
                 var result = await socket.ReceiveAsync(buffer, cancellationToken);
                 if (result.MessageType == WebSocketMessageType.Close)
                     return;
+
+                if (discarding || message.WrittenCount + result.Count > limit)
+                {
+                    if (!discarding)
+                        logger.LogWarning(
+                            "device {DeviceId} chunk over this relay's {Limit}-byte "
+                            + "window - discarding it, keeping the pipe",
+                            DeviceId, SessionChunk.MaxPayload);
+                    discarding = true;
+                    message.ResetWrittenCount();
+                    // Read to the end of the message anyway: stopping early would
+                    // leave its tail to be read as the next chunk's header.
+                    if (!result.EndOfMessage)
+                        continue;
+                    discarding = false;
+                    continue;
+                }
 
                 message.Write(buffer.AsSpan(0, result.Count));
                 if (!result.EndOfMessage)
@@ -626,6 +649,27 @@ internal sealed class DeviceConnection
 
         var (browserSession, flags) = SessionChunk.ReadHeader(chunk.Span);
         var payload = chunk[SessionChunk.HeaderSize..];
+
+        // Refuse an oversized chunk HERE rather than forward it. Each hop owns its
+        // own framing, so the relay has no way to know what the device at the other
+        // end can take in one piece -- it only knows what it is willing to send,
+        // which is this. Forwarding more on a browser's say-so used to push the
+        // device past its own buffer, and before the firmware learned to drop such a
+        // chunk on one channel that took the whole pipe down with it.
+        //
+        // The browser is told on its own session id, which is the one id it holds.
+        if (payload.Length > SessionChunk.MaxPayload)
+        {
+            logger.LogWarning(
+                "browser chunk on {DeviceId} is {Length} bytes, over this relay's "
+                + "{Limit}-byte window - refused", DeviceId, payload.Length,
+                SessionChunk.MaxPayload);
+            await browser.SendAsync(
+                SessionChunk.Frame(browserSession, SessionChunk.FlagReset,
+                    Encoding.UTF8.GetBytes("chunk over the relay's window")),
+                cancellationToken);
+            return;
+        }
 
         ushort session;
         bool opening;

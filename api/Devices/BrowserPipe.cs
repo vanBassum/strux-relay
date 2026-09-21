@@ -59,11 +59,17 @@ internal static class BrowserPipe
         logger.LogInformation(
             "browser attached to {DeviceId} ({Count} total)", deviceId, connection.BrowserCount);
 
-        // Sized like the device's own window, and for the same reason: one receive
-        // covers a whole chunk in the ordinary case, and the accumulator is what
-        // handles a frame the socket chose to deliver in pieces.
-        var buffer = ArrayPool<byte>.Shared.Rent(SessionChunk.MaxPayload + SessionChunk.HeaderSize);
-        var message = new ArrayBufferWriter<byte>(SessionChunk.MaxPayload + SessionChunk.HeaderSize);
+        // One receive covers a whole chunk in the ordinary case, and the accumulator
+        // is what handles a frame the socket chose to deliver in pieces.
+        var limit = SessionChunk.MaxPayload + SessionChunk.HeaderSize;
+        var buffer = ArrayPool<byte>.Shared.Rent(limit);
+        var message = new ArrayBufferWriter<byte>(limit);
+
+        // An ArrayBufferWriter GROWS. Without this a browser decides how much of
+        // the relay's memory to take, and the rented buffer above is only a hint.
+        // RelayFromBrowserAsync refuses an over-window chunk it can see; this is
+        // what stops one being accumulated in the first place.
+        var discarding = false;
 
         try
         {
@@ -72,6 +78,23 @@ internal static class BrowserPipe
                 var result = await socket.ReceiveAsync(buffer, context.RequestAborted);
                 if (result.MessageType == WebSocketMessageType.Close)
                     break;
+
+                if (discarding || message.WrittenCount + result.Count > limit)
+                {
+                    if (!discarding)
+                        logger.LogWarning(
+                            "browser on {DeviceId} sent a chunk over this relay's "
+                            + "{Limit}-byte window - discarded", deviceId,
+                            SessionChunk.MaxPayload);
+                    discarding = true;
+                    message.ResetWrittenCount();
+                    // Read to the end of the message anyway, or its tail is read as
+                    // the next chunk's header.
+                    if (!result.EndOfMessage)
+                        continue;
+                    discarding = false;
+                    continue;
+                }
 
                 message.Write(buffer.AsSpan(0, result.Count));
                 if (!result.EndOfMessage)
