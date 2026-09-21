@@ -632,6 +632,17 @@ internal sealed class DeviceConnection
         lock (browserLock)
         {
             opening = !browserMap.TryGetValue((browser, browserSession), out session);
+
+            // On the channels wire, "no mapping" is not the same as "new session".
+            // A frame without OPEN for an id nobody holds is residue from a channel
+            // that has already finished, and the device would drop it -- but opening
+            // a session for it here TAKES THE PIPE, forwards something the device
+            // then drops, and holds the gate until the watchdog fires fifteen
+            // seconds later. This rule is the device's, applied at the relay.
+            if (opening && wire == SessionChunk.Wire.Channels
+                && (flags & SessionChunk.FlagOpen) == 0)
+                return;
+
             if (opening)
             {
                 session = AllocateBrowserSession();
