@@ -8,8 +8,10 @@ dashboard in `frontend/` built into `api/wwwroot`. Devices dial out to it over a
 WebSocket; browsers and agents reach a device through it. Each reviewer has one focus
 area, described in its own file. Stay inside it; the other reviewers cover the rest.
 
-Before you start, read `README.md`. It describes the endpoints, the pairing handshake
-and the design rules this code is held to. The firmware lives in its own repository
+Before you start, read `README.md` and `docs/operations.md`. The README describes the
+endpoints, the pairing handshake and the design rules; operations describes the
+deployment (Traefik routing, Authentik) and its settled decisions. CI runs
+`tests/StruxRelay.Tests` and must pass before a PR merges. The firmware lives in its own repository
 (vanBassum/Strux) and is not visible to you. Its wire format is binary session chunks
 `[session u16 LE][flags u8][payload]`, with `FLAG_FINAL` 0x01 and `FLAG_REJECT` 0x02,
 session 0 for log broadcasts, `0xFFFE` for the device hello and `0xFFFF` for

@@ -21,5 +21,8 @@ Look for:
   built output is not hand-edited.
 - **Generic MCP surface.** The MCP tools are generic over any device; a tool that
   knows one product's command names belongs to that product, not the relay.
-- **Docs.** A change to an endpoint, a setting or the handshake updates `README.md` in
-  the same PR.
+- **Tests.** New logic that is easy to unit-test (chunk parsing, routing, token and
+  OAuth checks) comes with a test in `tests/StruxRelay.Tests`.
+- **Docs.** A change to an endpoint, a setting or the handshake updates `README.md`,
+  and a change to how the relay is deployed or a settled decision updates
+  `docs/operations.md`, in the same PR.
