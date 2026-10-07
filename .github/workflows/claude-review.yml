@@ -27,7 +27,8 @@ name: Claude PR review
 # pull_request_target never fires.) Hence the trust boundary below: a PR that touches the mechanism deciding merges never merges itself.
 #
 # Auto-merge: when every reviewer ends its summary with `blocking=0` for the PR's
-# current head commit, the automerge job squash-merges the PR into main. A PR with
+# current head commit, the automerge job enables GitHub auto-merge, which squash-merges
+# the PR into main once the required CI checks have passed as well. A PR with
 # the `no-automerge` label is left open. Anything else (a blocking finding, a missing
 # verdict) fails the job, so a red check always means the PR needs attention.
 #
@@ -150,4 +151,5 @@ jobs:
             echo "::error::Reviewers passed, but this PR changes .github/workflows/ or .github/reviewers/. Bas merges it by hand."
             exit 1
           fi
-          gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --delete-branch --match-head-commit "$SHA"
+          # --auto: GitHub merges once the required CI checks (build, tests) are green too.
+          gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch --match-head-commit "$SHA"

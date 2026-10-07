@@ -6,7 +6,11 @@ behind it is someone's hardware.
 
 Background: a device must be approved and present its own token (`X-Strux-Token`) or
 its upgrade is refused with a 403; a pending device is refused before the upgrade and
-nothing it sends is recorded. Browsers are authenticated by the reverse proxy. Agents
+nothing it sends is recorded. Browsers are authenticated by the reverse proxy (Authentik), and the dashboard's
+pairing API deliberately has no check of its own: whoever can load the dashboard may
+approve. Don't report that as missing authorization; do report a new route that the
+proxy rules in `docs/operations.md` would leave unprotected (e.g. a `PathPrefix` that
+catches a browser path on the device route). Agents
 reach `/mcp` with a bearer token, or through the OAuth 2.1 flow under `/oauth/*`.
 
 Look for:
