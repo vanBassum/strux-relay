@@ -488,3 +488,12 @@ docker run -p 8080:8080 -v relay-data:/app/data ghcr.io/vanbassum/strux-relay:ma
 
 Approvals live in `/app/data`, so mount it or re-pair every device after an
 update.
+
+## Working on it
+
+`main` is protected: nothing is pushed to it directly, admins included. All work
+happens on a branch and reaches `main` as a squash-merged pull request. Five Claude
+reviewers (`.github/workflows/claude-review.yml`, rules in `.github/reviewers/`) run on
+every non-draft PR and merge it when none reports a blocking finding; label a PR
+`no-automerge` to keep it open. A PR touching `.github/workflows/` or
+`.github/reviewers/` is always merged by hand.
